@@ -321,9 +321,12 @@ class SupabaseAuthService private constructor(private val context: Context) {
         }
 
         val session = activeOtpSession
-        val expectedOtp = session?.otpCode ?: _devDisplayOtp.value ?: "123456"
+        val expectedOtp = session?.otpCode ?: _devDisplayOtp.value
+        if (expectedOtp.isNullOrBlank()) {
+            return failure(AuthErrorCode.OTP_NOT_REQUESTED, AuthPipelineStep.AUTHENTICATING_USER, "No active verification code. Please request a new OTP.")
+        }
 
-        if (clean != expectedOtp && clean != "123456" && clean != session?.otpCode) {
+        if (clean != expectedOtp) {
             return failure(AuthErrorCode.INVALID_OTP, AuthPipelineStep.AUTHENTICATING_USER, "Incorrect code. Please enter the displayed OTP.")
         }
 
@@ -331,13 +334,19 @@ class SupabaseAuthService private constructor(private val context: Context) {
             ?: session?.phoneNumber?.filter { it.isDigit() }?.takeLast(10)?.ifBlank { null }
             ?: "9876543210"
 
-        // Enforce role: If registered for a different role, reject immediately
+        // Dynamic role binding: check registered role across local cache, Supabase, and NestJS
         val registeredRole = checkRegisteredRole(cleanPhone)
+            ?: try {
+                NestJsAuthClient.lookupRegisteredRole(cleanPhone)?.let { mapRole(it) }
+            } catch (e: Exception) {
+                null
+            }
         if (registeredRole != null && registeredRole != targetRole) {
             activeOtpSession = null
             _devDisplayOtp.value = null
             val registeredTitle = roleTitle(registeredRole)
             val targetTitle = roleTitle(targetRole)
+            Log.w(TAG, "Cross-role OTP login blocked for +91 $cleanPhone: registered as $registeredTitle, requested $targetTitle")
             return failure(
                 AuthErrorCode.ROLE_MISMATCH,
                 AuthPipelineStep.VERIFYING_ROLE,
@@ -961,7 +970,7 @@ class SupabaseAuthService private constructor(private val context: Context) {
             )
         }
 
-        if (clean != session.otpCode && clean != "123456" && clean != _devDisplayOtp.value) {
+        if (clean != session.otpCode && clean != _devDisplayOtp.value) {
             session.attemptsRemaining -= 1
             if (session.attemptsRemaining <= 0) {
                 session.isLocked = true
@@ -1233,8 +1242,7 @@ class SupabaseAuthService private constructor(private val context: Context) {
         )
     }
 
-    private fun mapRole(value: String?): RoleType? = when (value?.trim()?.lowercase()) {
-        "informal_collector", "collector" -> RoleType.INFORMAL_COLLECTOR
+    private fun mapRole(value: String?): RoleType? = when (value?.trim()?.lowercase()) {        "informal_collector", "collector" -> RoleType.INFORMAL_COLLECTOR
         "formal_recycler", "recycler" -> RoleType.FORMAL_RECYCLER
         "government_admin", "admin" -> RoleType.GOVERNMENT_ADMIN
         else -> null
