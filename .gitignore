@@ -22,6 +22,7 @@ node_modules/
 dist/
 __pycache__/
 *.pyc
-# .env
+# Real secrets — never commit. Templates (.env.example) are safe to commit.
+.env
 !.env.example
 

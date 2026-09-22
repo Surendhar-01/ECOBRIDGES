@@ -219,11 +219,22 @@ fun UnifiedRoleAuthScreen(
                 isOtpRequested = true
                 otpCode = ""
                 if (authService.isDemoOtpMode()) {
-                    infoMessage = "Demo Mode — a random 6-digit Demo OTP was generated and is shown below. No SMS was sent."
+                    infoMessage = "Demo Mode — a random 6-digit Demo OTP was generated and is shown below. Signing you in automatically."
                     voiceEngine?.speak(
-                        "Demo mode. Your O T P is displayed on screen. No S M S was sent.",
+                        "Demo mode. Your O T P is displayed on screen. Signing you in automatically.",
                         language
                     )
+                    // Auto sign-in: the demo code is already on screen. Wait 2s
+                    // so the user sees it arrive, then fill it in — the OTP
+                    // card watcher submits it automatically (smooth sign-in).
+                    // Skipped if the user already typed a complete code.
+                    coroutineScope.launch {
+                        delay(2000L)
+                        val liveCode = authService.devDisplayOtp.value
+                        if (isOtpRequested && liveCode?.length == 6 && otpCode.length != 6) {
+                            otpCode = liveCode
+                        }
+                    }
                 } else {
                     infoMessage = "Verification code sent to +91 $phoneNumber via SMS."
                     voiceEngine?.speak(
@@ -301,6 +312,19 @@ fun UnifiedRoleAuthScreen(
                         "Credentials accepted. Your verification code is displayed on screen. Please enter it to continue.",
                         language
                     )
+                    if (authService.isDemoOtpMode()) {
+                        // Auto sign-in: wait 2s so the code is seen arriving,
+                        // then fill it — the challenge card watcher submits it.
+                        coroutineScope.launch {
+                            delay(2000L)
+                            val liveCode = authService.devDisplayOtp.value
+                            if (authStage == AuthStage.OTP_CHALLENGE &&
+                                liveCode?.length == 6 && otpCode.length != 6
+                            ) {
+                                otpCode = liveCode
+                            }
+                        }
+                    }
                 } else if (!res.isSuccess) {
                     errorMessage = res.errorMessage ?: "Authentication failed."
                     voiceEngine?.speak(errorMessage ?: "", language)
@@ -351,9 +375,23 @@ fun UnifiedRoleAuthScreen(
                 otpCode = ""
                 resendCountdown = authService.getResendCooldownRemaining().toInt().coerceAtLeast(45)
                 infoMessage = if (authService.isDemoOtpMode()) {
-                    "A new Demo OTP was generated and is shown below. No SMS was sent."
+                    "A new Demo OTP was generated and is shown below. Signing you in automatically."
                 } else {
                     "A new verification code was sent."
+                }
+                if (authService.isDemoOtpMode()) {
+                    // Auto sign-in on the fresh demo code, same as first send:
+                    // wait 2s, fill, watcher submits.
+                    coroutineScope.launch {
+                        delay(2000L)
+                        val liveCode = authService.devDisplayOtp.value
+                        if (authStage == AuthStage.OTP_CHALLENGE &&
+                            liveCode?.length == 6 && otpCode.length != 6 &&
+                            !isVerifying
+                        ) {
+                            otpCode = liveCode
+                        }
+                    }
                 }
             }.onFailure { err ->
                 errorMessage = err.localizedMessage ?: "Failed to resend the code."
@@ -983,6 +1021,16 @@ private fun PhoneOtpAuthCard(
     onVerifyLogin: () -> Unit,
     onChangeNumber: () -> Unit
 ) {
+    // Auto sign-in: submit the moment a complete 6-digit code is present —
+    // typed, pasted, or auto-filled. The typed path also fires onCompleted
+    // synchronously first (setting isVerifying), so this watcher strictly
+    // observes afterwards and can never double-submit. A failed attempt keeps
+    // the code without re-firing until it changes.
+    LaunchedEffect(otpCode, isOtpRequested) {
+        if (isOtpRequested && otpCode.length == 6 && !isVerifying) {
+            onVerifyLogin()
+        }
+    }
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(18.dp),
@@ -1300,6 +1348,14 @@ private fun LoginOtpChallengeCard(
     onResend: () -> Unit,
     onCancel: () -> Unit
 ) {
+    // Auto sign-in: submit the moment a complete 6-digit code is present —
+    // typed, pasted, or auto-filled. Same single-flight guarantee as the
+    // phone-first card (typed path sets isVerifying synchronously first).
+    LaunchedEffect(otpCode) {
+        if (otpCode.length == 6 && !isVerifying) {
+            onVerify()
+        }
+    }
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(18.dp),

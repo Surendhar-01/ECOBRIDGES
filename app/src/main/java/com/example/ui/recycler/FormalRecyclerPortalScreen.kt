@@ -461,7 +461,7 @@ fun FormalRecyclerPortalScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Collector Lots Awaiting Scale Weigh-In & Settlement",
+                        text = "Collector Lots Awaiting Scale Weigh-In",
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         color = TextPrimaryDark,
@@ -481,7 +481,7 @@ fun FormalRecyclerPortalScreen(
                             expanded = showLotFilterMenu,
                             onDismissRequest = { showLotFilterMenu = false }
                         ) {
-                            listOf("All" to null, "Awaiting weigh-in" to "awaiting", "Verified & Paid" to "verified").forEach { (label, key) ->
+                            listOf("All" to null, "Awaiting weigh-in" to "awaiting", "Verified" to "verified").forEach { (label, key) ->
                                 DropdownMenuItem(
                                     text = {
                                         Text(
@@ -545,7 +545,7 @@ fun FormalRecyclerPortalScreen(
                                 color = if (lot.recyclerConfirmed) SuccessGreen.copy(alpha = 0.15f) else WarningAmber.copy(alpha = 0.15f)
                             ) {
                                 Text(
-                                    text = if (lot.recyclerConfirmed) "VERIFIED & PAID" else "AWAITING WEIGH-IN",
+                                    text = if (lot.recyclerConfirmed) "VERIFIED" else "AWAITING WEIGH-IN",
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (lot.recyclerConfirmed) SuccessGreen else WarningAmber,
@@ -581,7 +581,7 @@ fun FormalRecyclerPortalScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Button(
-                                onClick = { viewModel.confirmRecyclerHandover(lot.lotId, verifiedWeight = parsedWeight, markPaid = true) },
+                                onClick = { viewModel.confirmRecyclerHandover(lot.lotId, verifiedWeight = parsedWeight, markPaid = false) },
                                 enabled = parsedWeight != null,
                                 colors = ButtonDefaults.buttonColors(containerColor = EcoGreenPrimary),
                                 shape = RoundedCornerShape(10.dp),
@@ -589,7 +589,7 @@ fun FormalRecyclerPortalScreen(
                                     .fillMaxWidth()
                                     .testTag("recycler_confirm_${lot.lotId}")
                             ) {
-                                Text("Weigh-In Verify & Dispatch Cash (₹${((parsedWeight ?: lot.weightKg) * lot.quotedRatePerKg).toInt()})", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("Verify Weight at Scale", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         } else {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -616,7 +616,7 @@ fun FormalRecyclerPortalScreen(
                 lots = lots,
                 language = language,
                 onConfirm = { lotId, weight ->
-                    viewModel.confirmRecyclerHandover(lotId, verifiedWeight = weight, markPaid = true)
+                    viewModel.confirmRecyclerHandover(lotId, verifiedWeight = weight, markPaid = false)
                 }
             )
             3 -> RecyclerReportsTab(
@@ -648,7 +648,7 @@ fun FormalRecyclerPortalScreen(
             lots = lots.filter { !it.recyclerConfirmed },
             onConfirm = { lotId, weight ->
                 showManualWeighIn = false
-                viewModel.confirmRecyclerHandover(lotId, verifiedWeight = weight, markPaid = true)
+                viewModel.confirmRecyclerHandover(lotId, verifiedWeight = weight, markPaid = false)
             },
             onDismiss = { showManualWeighIn = false }
         )
@@ -754,7 +754,7 @@ private fun RecyclerInboundLotsTab(
                             color = if (lot.recyclerConfirmed) SuccessGreen.copy(alpha = 0.15f) else WarningAmber.copy(alpha = 0.15f)
                         ) {
                             Text(
-                                text = if (lot.recyclerConfirmed) "VERIFIED & PAID" else "AWAITING WEIGH-IN",
+                                text = if (lot.recyclerConfirmed) "VERIFIED" else "AWAITING WEIGH-IN",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (lot.recyclerConfirmed) SuccessGreen else WarningAmber,
@@ -827,7 +827,7 @@ private fun RecyclerWeighInTab(
     ) {
         item {
             Text(
-                text = "Scale Weigh-In & Settlement",
+                text = "Scale Weigh-In & Verification",
                 fontWeight = FontWeight.Bold,
                 fontSize = 16.sp,
                 color = TextPrimaryDark
@@ -848,7 +848,7 @@ private fun RecyclerWeighInTab(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "All inbound lots are verified & paid. No pending weigh-ins.",
+                        text = "All inbound lots are weight-verified. No pending weigh-ins.",
                         fontSize = 13.sp,
                         color = TextSecondaryMuted,
                         modifier = Modifier.padding(16.dp)
@@ -898,7 +898,7 @@ private fun RecyclerWeighInTab(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = "Weigh-In Verify & Dispatch Cash (₹${((parsedWeight ?: lot.weightKg) * lot.quotedRatePerKg).toInt()})",
+                            text = "Verify Weight at Scale",
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
                             color = Color.White
@@ -950,7 +950,7 @@ private fun RecyclerReportsTab(
                     )
                     RecyclerStatCard(
                         modifier = Modifier.weight(1f),
-                        label = "Verified & Paid",
+                        label = "Weight Verified",
                         value = "${confirmed.size}",
                         subtitle = "Lots",
                         bgColor = EcoBlueBg,
@@ -1283,7 +1283,7 @@ private fun HandoverQrPickerDialog(
                                         modifier = Modifier.clickable { onWeighIn(lot.lotId) }
                                     ) {
                                         Text(
-                                            text = "Weigh-In",
+                                            text = "Scan & Pay",
                                             color = Color.White,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
@@ -1398,7 +1398,7 @@ private fun ManualWeighInDialog(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Verify & Dispatch Cash", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Verify Weight", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
             }
         }

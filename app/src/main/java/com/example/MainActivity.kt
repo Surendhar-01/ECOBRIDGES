@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -47,6 +48,8 @@ fun MainAppNavHost(
     val currentDestination by viewModel.navigationDestination.collectAsState()
     val currentLanguage by viewModel.selectedLanguage.collectAsState()
     val context = LocalContext.current
+    val authService = remember { SupabaseAuthService.getInstance(context) }
+    val authenticatedUser by authService.authenticatedUser.collectAsState()
 
     // Sync active screen with centralized VoiceIntentRouter
     LaunchedEffect(currentDestination) {
@@ -59,12 +62,12 @@ fun MainAppNavHost(
         viewModel.voiceEngine.router.updateScreen(screen, currentDestination)
     }
 
-    // Handle system back navigation when in role authentication.
-    // The authenticated session is fully cleared so returning to the portal
-    // chooser never re-opens the previous role's dashboard and no session state
-    // leaks across roles.
-    BackHandler(enabled = currentDestination != null) {
-        SupabaseAuthService.getInstance(context).signOut()
+    // Handle system back navigation only BEFORE login. Once authenticated,
+    // Back never returns to the Intro chooser: the user stays inside the
+    // authenticated flow (in-screen navigation handles previous pages), so
+    // the Intro page is unreachable via Back after login.
+    BackHandler(enabled = currentDestination != null && authenticatedUser == null) {
+        authService.signOut()
         viewModel.navigateBackToIntro()
     }
 
