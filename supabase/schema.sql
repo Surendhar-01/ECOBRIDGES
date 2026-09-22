@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     display_name         TEXT,
     entity_name          TEXT,
     statutory_identifier TEXT,
-    phone_number         TEXT,
+    phone_number         TEXT NOT NULL CHECK (phone_number ~ '^\+91 [6-9][0-9]{9}$'),
     email                TEXT,
     created_at           TIMESTAMPTZ DEFAULT now()
 );
@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS collector_lots (
     handover_receipt_number TEXT,
     recycler_confirmed      BOOLEAN DEFAULT FALSE,
     epr_certificate_no      TEXT,
+    manifest_details        TEXT,
     created_at              TIMESTAMPTZ DEFAULT now()
 );
 

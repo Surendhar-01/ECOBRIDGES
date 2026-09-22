@@ -771,13 +771,18 @@ class SupabaseAuthService private constructor(private val context: Context) {
             )
         }
 
-        // OTP matched — check if remote Supabase session exists and has a matching profile
+        // OTP matched — a live GoTrue session means the registered (dynamic)
+        // flow: resolve role/profile from the database. Any pipeline failure
+        // is returned honestly instead of silently downgrading to a local
+        // demo login, so portals never open with empty data and no reason.
         val supabaseUser = try {
             if (isConfigured()) SupabaseAuthConfig.client.auth.currentUserOrNull() else null
         } catch (e: Exception) {
+            Log.w(TAG, "Session lookup failed: ${e.message}")
             null
         }
         if (supabaseUser != null && (session.authUserId == null || supabaseUser.id == session.authUserId)) {
+            Log.i(TAG, "Live session for ${supabaseUser.email} — resolving dynamic profile")
             val remoteResult = executePostAuthPipeline(
                 authMethod = AuthMethod.EMAIL_PASSWORD,
                 targetRole = targetRole,
@@ -788,11 +793,14 @@ class SupabaseAuthService private constructor(private val context: Context) {
                 pendingOtpSession = null
                 _devDisplayOtp.value = null
                 return remoteResult
-            } else if (remoteResult.errorCode == AuthErrorCode.ROLE_MISMATCH) {
-                return remoteResult
             }
+            // Role mismatch, missing profile, or gated account: final answer.
+            // Never downgrade a live session to a local demo login.
+            Log.w(TAG, "Dynamic login refused: ${remoteResult.errorMessage}")
+            return remoteResult
         }
 
+        Log.i(TAG, "No live session — demo login for ${session.email} as ${targetRole.name}")
         val profileUser = createDemoProfile(
             role = targetRole,
             phone = "9876543210",

@@ -190,20 +190,22 @@ class CollectorDashboardViewModel(
      */
     fun refreshFromCloud() {
         viewModelScope.launch {
-            val userId = currentUserId()
-            if (userId.isBlank()) return@launch
             val database = EwasteDatabase.getDatabase(getApplication(), viewModelScope)
 
+            // 1. Fetch public registries (authorized recyclers, prices, safety)
             runCatching {
-                CloudSyncManager.fetchCollectorLots(userId).forEach {
-                    database.materialLotDao().insertLot(it.toEntity())
+                val recyclers = CloudSyncManager.fetchAuthorizedRecyclers()
+                if (recyclers.isNotEmpty()) {
+                    database.recyclerDao().insertRecyclers(recyclers.map { it.toEntity() })
+                } else if (database.recyclerDao().getRecyclerCount() == 0) {
+                    database.recyclerDao().insertRecyclers(EwasteRepository.getDefaultRecyclers())
+                }
+            }.onFailure {
+                if (database.recyclerDao().getRecyclerCount() == 0) {
+                    database.recyclerDao().insertRecyclers(EwasteRepository.getDefaultRecyclers())
                 }
             }
-            runCatching {
-                CloudSyncManager.fetchCollectorTransactions(userId).forEach {
-                    database.transactionLedgerDao().insertTransaction(it.toEntity())
-                }
-            }
+
             runCatching {
                 val prices = CloudSyncManager.fetchMaterialPrices()
                 if (prices.isNotEmpty()) database.priceDao().insertPrices(prices.map { it.toEntity() })
@@ -212,9 +214,20 @@ class CollectorDashboardViewModel(
                 val guides = CloudSyncManager.fetchSafetyGuidelines()
                 if (guides.isNotEmpty()) database.safetyGuidelineDao().insertGuidelines(guides.map { it.toEntity() })
             }
-            runCatching {
-                val recyclers = CloudSyncManager.fetchAuthorizedRecyclers()
-                if (recyclers.isNotEmpty()) database.recyclerDao().insertRecyclers(recyclers.map { it.toEntity() })
+
+            // 2. Fetch user-specific records (lots, transactions) if logged in
+            val userId = currentUserId()
+            if (userId.isNotBlank()) {
+                runCatching {
+                    CloudSyncManager.fetchCollectorLots(userId).forEach {
+                        database.materialLotDao().insertLot(it.toEntity())
+                    }
+                }
+                runCatching {
+                    CloudSyncManager.fetchCollectorTransactions(userId).forEach {
+                        database.transactionLedgerDao().insertTransaction(it.toEntity())
+                    }
+                }
             }
             _lastSyncTimestamp.value = System.currentTimeMillis()
         }
@@ -479,13 +492,22 @@ class CollectorDashboardViewModel(
     private fun loadBitmap(context: android.content.Context, uri: String): Bitmap? {
         return try {
             val resolver = context.contentResolver
+            val parsedUri = Uri.parse(uri)
+            val openStream = {
+                if (parsedUri.scheme == "content" || parsedUri.scheme == "file") {
+                    resolver.openInputStream(parsedUri)
+                } else {
+                    val file = java.io.File(uri)
+                    if (file.exists()) java.io.FileInputStream(file) else resolver.openInputStream(parsedUri)
+                }
+            }
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            runCatching { resolver.openInputStream(Uri.parse(uri))?.use { BitmapFactory.decodeStream(it, null, bounds) } }
+            runCatching { openStream()?.use { BitmapFactory.decodeStream(it, null, bounds) } }
             val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
             var inSampleSize = 1
             while (maxDim / (inSampleSize * 2) >= 1280) inSampleSize *= 2
             val opts = BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
-            resolver.openInputStream(Uri.parse(uri))?.use { BitmapFactory.decodeStream(it, null, opts) }
+            openStream()?.use { BitmapFactory.decodeStream(it, null, opts) }
         } catch (e: Exception) {
             Log.w(TAG, "Bitmap load failed for $uri: ${e.message}")
             null

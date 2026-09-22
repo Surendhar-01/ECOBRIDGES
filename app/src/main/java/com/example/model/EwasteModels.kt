@@ -133,6 +133,8 @@ data class MaterialLot(
     val handoverReceiptNumber: String? = null,
     val recyclerConfirmed: Boolean = false,
     val eprCertificateNo: String? = null,
+    /** E-waste manifest completed by the receiving formal recycler. */
+    val manifestDetails: String? = null,
     val isSynced: Boolean = true
 )
 

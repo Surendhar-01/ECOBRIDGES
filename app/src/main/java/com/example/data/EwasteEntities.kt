@@ -23,6 +23,7 @@ data class MaterialLotEntity(
     val handoverReceiptNumber: String?,
     val recyclerConfirmed: Boolean,
     val eprCertificateNo: String?,
+    val manifestDetails: String?,
     val isSynced: Boolean
 )
 
@@ -155,4 +156,3 @@ data class AuditLogEntity(
     val detailJson: String,
     val createdAt: Long
 )
-

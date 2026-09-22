@@ -150,6 +150,21 @@ fun HandoverDetailDialog(
                     }
                 }
 
+                lot.manifestDetails?.takeIf { it.isNotBlank() }?.let { manifest ->
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MintLight.copy(alpha = 0.45f)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
+                        modifier = Modifier.fillMaxWidth().testTag("collector_manifest_${lot.lotId.lowercase()}")
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text("Form-6 E-Waste Manifest", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = ForestGreenPrimary)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(manifest, fontSize = 12.sp, color = TextPrimaryDark)
+                        }
+                    }
+                }
+
                 // QR Code Representation & Verification Reference
                 Card(
                     shape = RoundedCornerShape(16.dp),

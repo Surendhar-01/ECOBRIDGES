@@ -196,10 +196,19 @@ fun CreateLotDialog(
         viewModel.checkDuplicateCandidate(selectedCategory, parsedWeight)
     }
 
-    // When AI analysis arrives, prefill the editable component summary (never weight).
+    // When AI analysis arrives, prefill the editable component summary and category/weight.
     LaunchedEffect(aiAnalysis) {
         val analysis = aiAnalysis ?: return@LaunchedEffect
         components = analysis.components.map { ComponentDraft(it.name, it.isUncertain) }
+        analysis.detectedCategory?.let { detected ->
+            selectedCategory = detected
+        }
+        if (weightInput.isBlank()) {
+            analysis.estimatedWeightKg?.let { w ->
+                weightInput = String.format(java.util.Locale.US, "%.1f", w)
+                weightTouched = true
+            }
+        }
     }
 
     fun cleanupAndDismiss() {
@@ -653,7 +662,7 @@ fun CreateLotDialog(
                                     Icon(Icons.Default.Warning, contentDescription = null, tint = WarningAmber, modifier = Modifier.size(14.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        "AI identification unavailable. Please select the e-waste category manually.",
+                                        unavailableSnapshot ?: "AI identification unavailable. Please select the e-waste category manually.",
                                         fontSize = 11.sp,
                                         color = WarningAmber,
                                         fontWeight = FontWeight.SemiBold

@@ -29,7 +29,7 @@ import kotlinx.coroutines.CoroutineScope
         QuotationEntity::class,
         AuditLogEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class EwasteDatabase : RoomDatabase() {

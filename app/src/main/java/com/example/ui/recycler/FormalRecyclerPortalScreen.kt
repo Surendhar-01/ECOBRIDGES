@@ -2,6 +2,8 @@ package com.example.ui.recycler
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +48,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -69,6 +72,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.model.Language
 import com.example.model.MaterialLot
 import com.example.ui.theme.BackgroundCream
@@ -112,6 +116,7 @@ fun FormalRecyclerPortalScreen(
     var recyclerTab by remember { mutableIntStateOf(0) } // 0 Dashboard, 1 Inbound Lots, 2 Weigh-in, 3 Reports, 4 Profile
     var showQrDialog by remember { mutableStateOf(false) }
     var showManualWeighIn by remember { mutableStateOf(false) }
+    var manifestLot by remember { mutableStateOf<MaterialLot?>(null) }
     var recyclerLotFilter by remember { mutableStateOf<String?>(null) } // null All, "awaiting", "verified"
     var showLotFilterMenu by remember { mutableStateOf(false) }
 
@@ -604,7 +609,8 @@ fun FormalRecyclerPortalScreen(
             1 -> RecyclerInboundLotsTab(
                 lots = lots,
                 language = language,
-                onOpenWeighIn = { recyclerTab = 2 }
+                onOpenWeighIn = { recyclerTab = 2 },
+                onOpenManifest = { manifestLot = it }
             )
             2 -> RecyclerWeighInTab(
                 lots = lots,
@@ -647,6 +653,10 @@ fun FormalRecyclerPortalScreen(
             onDismiss = { showManualWeighIn = false }
         )
     }
+    manifestLot?.let { lot -> EwasteManifestDialog(lot, { manifestLot = null }) { details ->
+        viewModel.saveManifest(lot.lotId, details)
+        manifestLot = null
+    } }
 }
 
 // ---------------------------------------------------------------------------
@@ -657,7 +667,8 @@ fun FormalRecyclerPortalScreen(
 private fun RecyclerInboundLotsTab(
     lots: List<MaterialLot>,
     language: Language,
-    onOpenWeighIn: () -> Unit
+    onOpenWeighIn: () -> Unit,
+    onOpenManifest: (MaterialLot) -> Unit
 ) {
     val pending = lots.count { !it.recyclerConfirmed }
     LazyColumn(
@@ -759,10 +770,46 @@ private fun RecyclerInboundLotsTab(
                         Text(text = "Collection Point: ${lot.collectionLocation}", fontSize = 11.sp, color = TextSecondaryMuted)
                         Text(text = "Value: ₹${lot.estimatedValueInr.toInt()}", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = EcoGreenPrimary)
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(onClick = { onOpenManifest(lot) }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.Description, null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (lot.manifestDetails.isNullOrBlank()) "Fill Form-6 Manifest" else "View / Update Form-6", fontSize = 12.sp)
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun EwasteManifestDialog(lot: MaterialLot, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var sender by remember { mutableStateOf(lot.collectionLocation) }
+    var transporter by remember { mutableStateOf("") }
+    var vehicle by remember { mutableStateOf("") }
+    var receiver by remember { mutableStateOf(lot.matchedRecyclerName ?: "") }
+    var authorization by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf(lot.manifestDetails ?: "") }
+    Dialog(onDismissRequest = onDismiss) {
+        Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = EcoWhite)) {
+            Column(modifier = Modifier.padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("E-Waste Manifest — Form 6", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = EcoGreenPrimary)
+                Text("Lot ${lot.lotId} • ${lot.category.titleEn} • ${lot.weightKg} kg", fontSize = 12.sp, color = EcoTextSecondary)
+                ManifestInput("Sender name & address", sender) { sender = it }
+                ManifestInput("Transporter name & address", transporter) { transporter = it }
+                ManifestInput("Vehicle type / registration number", vehicle) { vehicle = it }
+                ManifestInput("Receiver / recycler name & address", receiver) { receiver = it }
+                ManifestInput("Receiver authorization number", authorization) { authorization = it }
+                ManifestInput("Handover notes", notes, false) { notes = it }
+                Button(onClick = { onSave("Form-6 E-Waste Manifest\nSender: $sender\nTransporter: $transporter\nVehicle: $vehicle\nReceiver: $receiver\nReceiver authorization: $authorization\nE-waste: ${lot.category.titleEn}; ${lot.subCategory}; ${lot.weightKg} kg\nNotes: $notes") }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = EcoGreenPrimary)) { Text("Save & share with collector") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManifestInput(label: String, value: String, singleLine: Boolean = true, onChange: (String) -> Unit) {
+    OutlinedTextField(value = value, onValueChange = onChange, label = { Text(label, fontSize = 11.sp) }, singleLine = singleLine, modifier = Modifier.fillMaxWidth())
 }
 
 @Composable

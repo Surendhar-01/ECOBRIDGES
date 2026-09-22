@@ -234,6 +234,7 @@ class EwasteRepository(
             handoverReceiptNumber = receiptNumber,
             recyclerConfirmed = false,
             eprCertificateNo = null,
+            manifestDetails = null,
             isSynced = !isOffline
         )
         lotDao.insertLot(entity)
@@ -299,6 +300,12 @@ class EwasteRepository(
             isSettled = markPaid
         )
         ledgerDao.insertTransaction(txn)
+    }
+
+    /** Saves the formal recycler's Form-6 manifest against the shared lot. */
+    suspend fun saveManifest(lotId: String, details: String) {
+        val existing = lotDao.getLotById(lotId) ?: return
+        lotDao.updateLot(existing.copy(manifestDetails = details, isSynced = false))
     }
 
     fun getSafetyGuidance(): List<HazardSafetyInfo> = Companion.getSafetyGuidance()
@@ -388,6 +395,80 @@ class EwasteRepository(
                 )
             )
         }
+
+        // Standard authorized recyclers (fallback seed for offline / cold-start map rendering)
+        fun getDefaultRecyclers(): List<RecyclerEntity> {
+            return listOf(
+                RecyclerEntity(
+                    recyclerId = "REC-CPCB-MH-001",
+                    name = "EcoReclaim Green Refineries Pvt Ltd",
+                    facilityLocation = "Plot C-14, MIDC Turbhe, Navi Mumbai",
+                    city = "Mumbai",
+                    distanceKm = 4.2,
+                    cpcbRegNo = "CPCB/EPR-REC/2023/MH-0042",
+                    authorizationValidity = "Valid until Dec 2028",
+                    phone = "+91 98201 44521",
+                    acceptedCategoriesJoined = "PCB_BOARDS,CABLES_WIRES,BATTERIES,MOTORS_MAGNETS,LCD_PANELS",
+                    ratesJson = "",
+                    doorstepPickup = true,
+                    minWeightForPickupKg = 25.0,
+                    rating = 4.9f,
+                    latitude = 19.0688,
+                    longitude = 73.0189
+                ),
+                RecyclerEntity(
+                    recyclerId = "REC-CPCB-MH-002",
+                    name = "MahaClean Tech Circular Resources",
+                    facilityLocation = "Bhiwandi Logistics Park, Thane District",
+                    city = "Mumbai",
+                    distanceKm = 11.5,
+                    cpcbRegNo = "CPCB/EPR-REC/2022/MH-0118",
+                    authorizationValidity = "Valid until Aug 2027",
+                    phone = "+91 91370 88234",
+                    acceptedCategoriesJoined = "PCB_BOARDS,CABLES_WIRES,CRTS_MONITORS,MIXED_PLASTICS",
+                    ratesJson = "",
+                    doorstepPickup = true,
+                    minWeightForPickupKg = 50.0,
+                    rating = 4.7f,
+                    latitude = 19.2967,
+                    longitude = 73.0631
+                ),
+                RecyclerEntity(
+                    recyclerId = "REC-CPCB-MH-003",
+                    name = "SwachhBharat E-Waste Recyclers",
+                    facilityLocation = "Pimpri-Chinchwad MIDC Phase 2, Pune",
+                    city = "Pune",
+                    distanceKm = 120.0,
+                    cpcbRegNo = "CPCB/EPR-REC/2024/MH-0205",
+                    authorizationValidity = "Valid until Jan 2029",
+                    phone = "+91 98902 55192",
+                    acceptedCategoriesJoined = "PCB_BOARDS,BATTERIES,LCD_PANELS,MOTORS_MAGNETS",
+                    ratesJson = "",
+                    doorstepPickup = true,
+                    minWeightForPickupKg = 40.0,
+                    rating = 4.8f,
+                    latitude = 18.6298,
+                    longitude = 73.7997
+                ),
+                RecyclerEntity(
+                    recyclerId = "REC-CPCB-MH-004",
+                    name = "Kurla Aggregator & Dismantling Center",
+                    facilityLocation = "LBS Marg, Kurla West, Mumbai",
+                    city = "Mumbai",
+                    distanceKm = 2.8,
+                    cpcbRegNo = "CPCB/EPR-REC/2023/MH-0091",
+                    authorizationValidity = "Valid until Nov 2027",
+                    phone = "+91 98205 11299",
+                    acceptedCategoriesJoined = "PCB_BOARDS,CABLES_WIRES,BATTERIES,CRTS_MONITORS,LCD_PANELS,MOTORS_MAGNETS,MIXED_PLASTICS",
+                    ratesJson = "",
+                    doorstepPickup = true,
+                    minWeightForPickupKg = 15.0,
+                    rating = 4.6f,
+                    latitude = 19.0728,
+                    longitude = 72.8795
+                )
+            )
+        }
     }
 }
 
@@ -416,6 +497,7 @@ private fun MaterialLotEntity.toDomainModel(): MaterialLot {
         handoverReceiptNumber = handoverReceiptNumber,
         recyclerConfirmed = recyclerConfirmed,
         eprCertificateNo = eprCertificateNo,
+        manifestDetails = manifestDetails,
         isSynced = isSynced
     )
 }
@@ -477,4 +559,3 @@ private fun SafetyGuidelineEntity.toDomainModel(): HazardSafetyInfo {
         alertLevel = alertLevel
     )
 }
-

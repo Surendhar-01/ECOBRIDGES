@@ -5,11 +5,13 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
+import com.example.auth.ProfileRow
 import com.example.auth.SupabaseAuthConfig
 import com.example.model.LotStatus
 import com.example.model.MaterialCategory
 import com.example.model.MaterialLot
 import com.example.model.PaymentMode
+import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.storage.storage
 import kotlinx.serialization.Serializable
@@ -47,7 +49,8 @@ object CloudSyncManager {
         val payment_mode: String,
         val handover_receipt_number: String? = null,
         val recycler_confirmed: Boolean,
-        val epr_certificate_no: String? = null
+        val epr_certificate_no: String? = null,
+        val manifest_details: String? = null
     )
 
     @Serializable
@@ -206,14 +209,23 @@ object CloudSyncManager {
         if (!SupabaseAuthConfig.isConfigured()) {
             return SyncOutcome(0, 0, serverReachable = false)
         }
+        // RLS ties every lot/transaction row to the signed-in Supabase user
+        // (auth.uid() = collector_user_id). When the device holds a real GoTrue
+        // session (email/Google login), stamp its uid so rows land under the
+        // registered profile and surface in the admin directory. Otherwise keep
+        // the local id (offline/demo) — the push then fails softly by design.
+        val sessionUid = runCatching {
+            SupabaseAuthConfig.client.auth.currentUserOrNull()?.id
+        }.getOrNull()?.ifBlank { null }
+        val effectiveUserId = sessionUid ?: userId
         try {
             if (lots.isNotEmpty()) {
-                val lotDtos = lots.map { it.toSyncDto(userId) }
+                val lotDtos = lots.map { it.toSyncDto(effectiveUserId) }
                 SupabaseAuthConfig.client.from("collector_lots")
                     .upsert(lotDtos) { onConflict = "lot_id" }
             }
             if (transactions.isNotEmpty()) {
-                val txnDtos = transactions.map { it.toSyncDto(userId) }
+                val txnDtos = transactions.map { it.toSyncDto(effectiveUserId) }
                 SupabaseAuthConfig.client.from("collector_transactions")
                     .upsert(txnDtos) { onConflict = "transaction_id" }
             }
@@ -398,6 +410,22 @@ object CloudSyncManager {
         }
     }
 
+    /** Government directory: every `profiles` row for one role
+     *  (`informal_collector` / `formal_recycler`), newest last. Requires an
+     *  authenticated admin session (RLS `government_admin` check); returns an
+     *  empty list otherwise. Never fabricated. */
+    suspend fun fetchProfilesByRole(role: String): List<ProfileRow> {
+        if (!SupabaseAuthConfig.isConfigured()) return emptyList()
+        return try {
+            SupabaseAuthConfig.client.from("profiles")
+                .select { filter { eq("role", role) } }
+                .decodeList<ProfileRow>()
+        } catch (e: Exception) {
+            Log.w(TAG, "Directory fetch failed for $role: ${e.message}")
+            emptyList()
+        }
+    }
+
     suspend fun fetchMaterialPrices(): List<PriceDto> {
         if (!SupabaseAuthConfig.isConfigured()) return emptyList()
         return try {
@@ -496,7 +524,8 @@ private fun MaterialLotEntity.toSyncDto(userId: String): CloudSyncManager.Collec
         payment_mode = paymentModeName,
         handover_receipt_number = handoverReceiptNumber,
         recycler_confirmed = recyclerConfirmed,
-        epr_certificate_no = eprCertificateNo
+        epr_certificate_no = eprCertificateNo,
+        manifest_details = manifestDetails
     )
 
 private fun TransactionLedgerEntity.toSyncDto(userId: String): CloudSyncManager.CollectorTxnDto =
@@ -594,7 +623,8 @@ fun MaterialLot.toCollectorLotDto(collectorUserId: String): CloudSyncManager.Col
         payment_mode = paymentMode.name,
         handover_receipt_number = handoverReceiptNumber,
         recycler_confirmed = recyclerConfirmed,
-        epr_certificate_no = eprCertificateNo
+        epr_certificate_no = eprCertificateNo,
+        manifest_details = manifestDetails
     )
 
 fun CloudSyncManager.CollectorLotDto.toEntity(): MaterialLotEntity = MaterialLotEntity(
@@ -616,6 +646,7 @@ fun CloudSyncManager.CollectorLotDto.toEntity(): MaterialLotEntity = MaterialLot
     handoverReceiptNumber = handover_receipt_number,
     recyclerConfirmed = recycler_confirmed,
     eprCertificateNo = epr_certificate_no,
+    manifestDetails = manifest_details,
     isSynced = true
 )
 
@@ -644,6 +675,7 @@ fun CloudSyncManager.CollectorLotDto.toMaterialLot(): MaterialLot {
         handoverReceiptNumber = handover_receipt_number,
         recyclerConfirmed = recycler_confirmed,
         eprCertificateNo = epr_certificate_no,
+        manifestDetails = manifest_details,
         isSynced = true
     )
 }

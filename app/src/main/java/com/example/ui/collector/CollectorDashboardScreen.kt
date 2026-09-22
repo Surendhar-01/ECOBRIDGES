@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Handshake
 import androidx.compose.material.icons.filled.LocalShipping
@@ -176,6 +177,7 @@ fun CollectorDashboardScreen(
         }
     }
     var showMapView by remember { mutableStateOf(false) }
+    var selectedRecyclerIdForMap by remember { mutableStateOf<String?>(null) }
     var showScannerView by remember { mutableStateOf(false) }
     // Header notification menu
     var showNotifications by remember { mutableStateOf(false) }
@@ -256,9 +258,14 @@ fun CollectorDashboardScreen(
         MapCollectionPointsScreen(
             recyclers = recyclers,
             language = language,
-            onBack = { showMapView = false },
+            onBack = {
+                showMapView = false
+                selectedRecyclerIdForMap = null
+            },
+            initialRecyclerId = selectedRecyclerIdForMap,
             onSelectRecyclerForLot = { selectedRecycler ->
                 showMapView = false
+                selectedRecyclerIdForMap = null
                 showCreateDialog = true
             }
         )
@@ -425,6 +432,7 @@ fun CollectorDashboardScreen(
                 val navItems = listOf(
                     Triple("Home", Icons.Default.Home, 0),
                     Triple("My Lots", Icons.Default.Inventory2, 1),
+                    Triple("Recyclers", Icons.Default.LocationOn, 2),
                     Triple("Earnings", Icons.Default.CurrencyRupee, 5),
                     Triple("Profile", Icons.Default.Person, 6)
                 )
@@ -484,7 +492,14 @@ fun CollectorDashboardScreen(
                     onSelectLot = { lot -> viewModel.selectLot(lot) },
                     onScanEwaste = { showScannerView = true },
                     onOpenRecyclers = { activeTab = 2 },
-                    onOpenMap = { showMapView = true },
+                    onOpenMap = {
+                        selectedRecyclerIdForMap = null
+                        showMapView = true
+                    },
+                    onOpenMapForRecycler = { recyclerId ->
+                        selectedRecyclerIdForMap = recyclerId
+                        showMapView = true
+                    },
                     onStartAssistant = { viewModel.voiceEngine?.startListening(language) },
                     anomalousLotIds = anomalousLotIds,
                     hasActiveFilters = hasActiveFilters,
@@ -526,7 +541,25 @@ fun CollectorDashboardScreen(
                         val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))
                         context.startActivity(intent)
                     },
-                    onOpenMap = { showMapView = true }
+                    onOpenMap = { recyclerId ->
+                        selectedRecyclerIdForMap = recyclerId
+                        showMapView = true
+                    },
+                    onNavigateToRecycler = { lat, lng ->
+                        val geoUri = Uri.parse("google.navigation:q=$lat,$lng")
+                        val mapIntent = Intent(Intent.ACTION_VIEW, geoUri).apply {
+                            setPackage("com.google.android.apps.maps")
+                        }
+                        runCatching {
+                            context.startActivity(mapIntent)
+                        }.onFailure {
+                            val webMap = Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$lat,$lng")
+                            )
+                            context.startActivity(webMap)
+                        }
+                    }
                 )
                 3 -> LocationConnectionsTab(
                     recyclers = recyclers,
@@ -678,6 +711,7 @@ fun HomeTab(
     onScanEwaste: () -> Unit,
     onOpenRecyclers: () -> Unit,
     onOpenMap: () -> Unit,
+    onOpenMapForRecycler: ((String) -> Unit)? = null,
     onStartAssistant: () -> Unit,
     anomalousLotIds: Set<String>,
     hasActiveFilters: Boolean,
@@ -860,6 +894,49 @@ fun HomeTab(
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                 )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.White.copy(alpha = 0.22f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable {
+                                        onOpenMapForRecycler?.invoke(featured.recyclerId) ?: onOpenMap()
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.LocationOn, contentDescription = null, tint = EmeraldAccent, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("View on Map", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.White.copy(alpha = 0.22f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { onOpenRecyclers() }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("View All Hubs", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
@@ -1064,19 +1141,43 @@ fun HomeTab(
                         color = EcoTextSecondary
                     )
                 }
-                Text(
-                    text = when (language) {
-                        Language.ENGLISH -> "View Nearby"
-                        Language.HINDI -> "आस-पास देखें"
-                        Language.MARATHI -> "जवळील पहा"
-                    },
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = EcoGreenPrimary,
-                    modifier = Modifier
-                        .clickable { onOpenRecyclers() }
-                        .padding(4.dp)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = EcoMint,
+                        modifier = Modifier
+                            .clickable { onOpenMap() }
+                            .testTag("home_open_live_map_btn")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.LocationOn, contentDescription = null, tint = EcoGreenPrimary, modifier = Modifier.size(13.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "Live Map",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = EcoGreenPrimary
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = when (language) {
+                            Language.ENGLISH -> "View All"
+                            Language.HINDI -> "सभी देखें"
+                            Language.MARATHI -> "सर्व पहा"
+                        },
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = EcoGreenPrimary,
+                        modifier = Modifier
+                            .clickable { onOpenRecyclers() }
+                            .padding(4.dp)
+                    )
+                }
             }
         }
 
@@ -1087,7 +1188,7 @@ fun HomeTab(
                 border = androidx.compose.foundation.BorderStroke(1.dp, EcoBorder),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onOpenRecyclers() }
+                    .clickable { onOpenMapForRecycler?.invoke(rec.recyclerId) ?: onOpenRecyclers() }
                     .testTag("home_recycler_card_${rec.recyclerId.lowercase()}")
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -2568,7 +2669,8 @@ fun RecyclersTab(
     recyclers: List<AuthorizedRecycler>,
     language: Language,
     onCallRecycler: (String) -> Unit,
-    onOpenMap: () -> Unit
+    onOpenMap: (String?) -> Unit,
+    onNavigateToRecycler: (Double, Double) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
@@ -2615,7 +2717,7 @@ fun RecyclersTab(
                         color = Color.White.copy(alpha = 0.18f),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onOpenMap() }
+                            .clickable { onOpenMap(null) }
                             .testTag("open_map_from_tab_btn")
                     ) {
                         Row(
@@ -2780,29 +2882,66 @@ fun RecyclersTab(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    // Action buttons: View on Map, Directions, Call
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Scale weigh-in • e-receipt",
-                            fontSize = 11.sp,
-                            color = TextSecondaryMuted
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MintLight,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onOpenMap(rec.recyclerId) }
+                                .testTag("recycler_view_map_${rec.recyclerId.lowercase()}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(imageVector = Icons.Default.LocationOn, contentDescription = null, tint = ForestGreenPrimary, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(text = "Map", color = ForestGreenPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MintLight,
+                            modifier = Modifier
+                                .weight(1.2f)
+                                .clickable { onNavigateToRecycler(rec.latitude, rec.longitude) }
+                                .testTag("recycler_directions_${rec.recyclerId.lowercase()}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(imageVector = Icons.Default.Directions, contentDescription = null, tint = ForestGreenPrimary, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(text = "Directions", color = ForestGreenPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
 
                         Surface(
                             shape = RoundedCornerShape(10.dp),
                             color = ForestGreenPrimary,
-                            modifier = Modifier.clickable { onCallRecycler(rec.phone) }
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onCallRecycler(rec.phone) }
+                                .testTag("recycler_call_${rec.recyclerId.lowercase()}")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(imageVector = Icons.Default.Call, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text(text = "Call Recycler", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(text = "Call", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }

@@ -157,6 +157,15 @@ class RecyclerViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun saveManifest(lotId: String, details: String) {
+        viewModelScope.launch {
+            try {
+                repository.saveManifest(lotId, details)
+                _lastError.value = null
+            } catch (e: Exception) { _lastError.value = e.message }
+        }
+    }
+
     fun pendingCount(): Int = _lots.value.count { !it.recyclerConfirmed }
 
     fun confirmedWeightMt(): Double =

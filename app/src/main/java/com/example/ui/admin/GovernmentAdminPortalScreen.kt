@@ -20,6 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.Factory
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -33,17 +35,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.Language
+import com.example.model.MaterialLot
 import com.example.ui.theme.BackgroundCream
 import com.example.ui.theme.EmeraldAccent
 import com.example.ui.theme.ForestGreenDark
@@ -54,6 +59,7 @@ import com.example.ui.theme.TextPrimaryDark
 import com.example.ui.theme.TextSecondaryMuted
 import com.example.ui.theme.WarningAmber
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,7 +71,20 @@ fun GovernmentAdminPortalScreen(
 ) {
     val metrics by viewModel.metrics.collectAsState()
     val lots by viewModel.lots.collectAsState()
+    val collectors by viewModel.collectors.collectAsState()
+    val recyclers by viewModel.recyclers.collectAsState()
+    val unlinkedLots by viewModel.unlinkedLots.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
+    val lastError by viewModel.lastError.collectAsState()
+
+    // Keep the national registry current while an officer is viewing it. The
+    // refresh icon remains available for an immediate on-demand update.
+    LaunchedEffect(viewModel) {
+        while (true) {
+            delay(15_000)
+            viewModel.refresh()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -129,6 +148,22 @@ fun GovernmentAdminPortalScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            if (lastError != null) {
+                item {
+                    Surface(
+                        color = WarningAmber.copy(alpha = 0.16f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = lastError!!,
+                            color = TextPrimaryDark,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+            }
             item {
                 Card(
                     shape = RoundedCornerShape(18.dp),
@@ -221,6 +256,84 @@ fun GovernmentAdminPortalScreen(
                                 ForestGreenPrimary
                             )
                         }
+                    }
+                }
+            }
+
+            item {
+                DirectorySectionHeader(
+                    title = "Informal Collectors",
+                    count = collectors.size,
+                    testTag = "admin_collectors_header"
+                )
+            }
+
+            if (collectors.isEmpty()) {
+                item {
+                    DirectoryEmptyHint(
+                        text = "No collector profiles visible. Sign in with the registered admin email account to load the live directory.",
+                        testTag = "admin_collectors_empty"
+                    )
+                }
+            }
+
+            items(collectors) { entry ->
+                UserDirectoryCard(
+                    entry = entry,
+                    language = language,
+                    icon = Icons.Default.Person,
+                    idLabel = entry.profile.statutory_identifier ?: "—",
+                    testTag = "admin_collector_card"
+                )
+            }
+
+            item {
+                DirectorySectionHeader(
+                    title = "Formal Recyclers",
+                    count = recyclers.size,
+                    testTag = "admin_recyclers_header"
+                )
+            }
+
+            if (recyclers.isEmpty()) {
+                item {
+                    DirectoryEmptyHint(
+                        text = "No recycler profiles visible. Sign in with the registered admin email account to load the live directory.",
+                        testTag = "admin_recyclers_empty"
+                    )
+                }
+            }
+
+            items(recyclers) { entry ->
+                UserDirectoryCard(
+                    entry = entry,
+                    language = language,
+                    icon = Icons.Default.Factory,
+                    idLabel = entry.profile.statutory_identifier
+                        ?: entry.profile.entity_name ?: "—",
+                    testTag = "admin_recycler_card"
+                )
+            }
+
+            if (unlinkedLots.isNotEmpty()) {
+                item {
+                    DirectorySectionHeader(
+                        title = "Device Lots Awaiting Profile Link",
+                        count = unlinkedLots.size,
+                        testTag = "admin_unlinked_header"
+                    )
+                }
+            }
+
+            items(unlinkedLots) { lot ->
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        LotMiniRow(lot = lot, language = language)
                     }
                 }
             }
@@ -324,7 +437,6 @@ private fun RowScope.MetricTile(label: String, value: String, caption: String) {
         }
     }
 }
-
 @Composable
 private fun RowScope.MetricTileLight(label: String, value: String, accent: Color) {
     Surface(
@@ -336,5 +448,169 @@ private fun RowScope.MetricTileLight(label: String, value: String, accent: Color
             Text(text = label, color = TextSecondaryMuted, fontSize = 10.sp)
             Text(text = value, color = accent, fontWeight = FontWeight.Bold, fontSize = 18.sp)
         }
+    }
+}
+
+@Composable
+private fun DirectorySectionHeader(title: String, count: Int, testTag: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTag),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            fontWeight = FontWeight.Bold,
+            fontSize = 15.sp,
+            color = TextPrimaryDark
+        )
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = ForestGreenPrimary.copy(alpha = 0.10f)
+        ) {
+            Text(
+                text = "$count live",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = ForestGreenPrimary,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun DirectoryEmptyHint(text: String, testTag: String) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTag)
+    ) {
+        Text(
+            text = text,
+            fontSize = 12.sp,
+            color = TextSecondaryMuted,
+            modifier = Modifier.padding(16.dp)
+        )
+    }
+}
+
+@Composable
+private fun UserDirectoryCard(
+    entry: UserDirectoryEntry,
+    language: Language,
+    icon: ImageVector,
+    idLabel: String,
+    testTag: String
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTag)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(ForestGreenPrimary.copy(alpha = 0.10f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = ForestGreenPrimary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = entry.displayName,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = ForestGreenPrimary
+                    )
+                    Text(
+                        text = "${entry.maskedPhone} • ${entry.profile.account_status ?: "active"}",
+                        fontSize = 11.sp,
+                        color = TextSecondaryMuted
+                    )
+                    Text(
+                        text = idLabel,
+                        fontSize = 10.sp,
+                        color = TextSecondaryMuted
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = ForestGreenPrimary.copy(alpha = 0.10f)
+                ) {
+                    Text(
+                        text = "${entry.lotCount} lots",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ForestGreenPrimary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "${entry.lotCount} lots • ${"%.1f".format(entry.totalKg)} kg • ₹${entry.totalValueInr.toInt()}",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = TextPrimaryDark
+            )
+
+            if (entry.lots.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                entry.lots.forEach { lot ->
+                    LotMiniRow(lot = lot, language = language)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LotMiniRow(lot: MaterialLot, language: Language) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = lot.lotId,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                color = ForestGreenPrimary
+            )
+            Text(
+                text = "${lot.category.getTitle(language)} • ${lot.weightKg} kg",
+                fontSize = 11.sp,
+                color = TextPrimaryDark
+            )
+        }
+        Text(
+            text = "₹${lot.estimatedValueInr.toInt()}",
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            color = ForestGreenPrimary
+        )
     }
 }

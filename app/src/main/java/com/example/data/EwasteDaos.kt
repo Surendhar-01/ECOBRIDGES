@@ -60,6 +60,9 @@ interface RecyclerDao {
     @Query("SELECT * FROM authorized_recyclers WHERE city = :city")
     fun getRecyclersByCity(city: String): Flow<List<RecyclerEntity>>
 
+    @Query("SELECT COUNT(*) FROM authorized_recyclers")
+    suspend fun getRecyclerCount(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRecyclers(recyclers: List<RecyclerEntity>)
 }
