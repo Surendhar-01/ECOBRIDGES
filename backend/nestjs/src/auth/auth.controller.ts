@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { AuthResponse, EmailLoginDto, GoogleSignInDto, RequestOtpDto, VerifyOtpDto } from './dto/auth.dto';
 
@@ -28,5 +28,11 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async loginWithGoogle(@Body() dto: GoogleSignInDto): Promise<AuthResponse> {
     return this.authService.loginWithGoogle(dto);
+  }
+
+  @Get('role-lookup')
+  async roleLookup(@Query('identifier') identifier: string) {
+    const registeredRole = await this.authService.lookupRegisteredRole(identifier || '');
+    return { registeredRole };
   }
 }

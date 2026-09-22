@@ -80,13 +80,12 @@ data class UserProfile(
 )
 
 data class OtpSession(
-    val destination: OtpDeliveryDestination = OtpDeliveryDestination.ALL_CHANNELS,
+    val destination: OtpDeliveryDestination = OtpDeliveryDestination.MOBILE_SMS,
     val phoneNumber: String? = null,
     val email: String? = null,
-    val googleAccount: String? = null,
-    /** Supabase auth user id this second-factor challenge belongs to. */
     val authUserId: String? = null,
     val otpCode: String,
+    val targetRole: RoleType? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val expiryTimestamp: Long = System.currentTimeMillis() + 5 * 60 * 1000L, // 5 minutes
     var attemptsRemaining: Int = 3,

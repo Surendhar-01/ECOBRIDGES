@@ -17,6 +17,7 @@ import com.example.data.ConnectionRequestEntity
 import com.example.data.EwasteDatabase
 import com.example.data.EwasteRepository
 import com.example.data.LotPhotoEntity
+import com.example.data.encodeRecyclerRates
 import com.example.data.toCollectorLotDto
 import com.example.data.toEntity
 import com.example.data.QuotationEntity
@@ -192,11 +193,22 @@ class CollectorDashboardViewModel(
         viewModelScope.launch {
             val database = EwasteDatabase.getDatabase(getApplication(), viewModelScope)
 
-            // 1. Fetch public registries (authorized recyclers, prices, safety)
+            // 1. Fetch public registries (authorized recyclers + rates, prices, safety)
             runCatching {
                 val recyclers = CloudSyncManager.fetchAuthorizedRecyclers()
                 if (recyclers.isNotEmpty()) {
-                    database.recyclerDao().insertRecyclers(recyclers.map { it.toEntity() })
+                    val ratesByRecycler = CloudSyncManager.fetchRecyclerOfferedRates()
+                        .groupBy({ it.recycler_id }, { it.category_name to it.rate_per_kg })
+                        .mapValues { (_, pairs) -> pairs.toMap() }
+                    database.recyclerDao().insertRecyclers(
+                        recyclers.map { remote ->
+                            remote.toEntity().copy(
+                                ratesJson = encodeRecyclerRates(
+                                    ratesByRecycler[remote.recycler_id].orEmpty()
+                                )
+                            )
+                        }
+                    )
                 } else if (database.recyclerDao().getRecyclerCount() == 0) {
                     database.recyclerDao().insertRecyclers(EwasteRepository.getDefaultRecyclers())
                 }

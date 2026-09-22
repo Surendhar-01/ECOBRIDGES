@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -53,6 +54,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -2113,6 +2115,28 @@ private fun RecyclerBadge(
 }
 
 @Composable
+private fun FilterChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = if (selected) ForestGreenPrimary else MintLight,
+        modifier = Modifier.clickable { onClick() }
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (selected) Color.White else ForestGreenPrimary,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+        )
+    }
+}
+
+@Composable
 fun LotsOverviewTab(
     lots: List<MaterialLot>,
     totalSettled: Double,
@@ -2672,6 +2696,26 @@ fun RecyclersTab(
     onOpenMap: (String?) -> Unit,
     onNavigateToRecycler: (Double, Double) -> Unit
 ) {
+    // Dynamic discovery filters. The incoming list already contains only
+    // authorized + active recyclers (repository gate); these filters narrow
+    // by accepted material, doorstep pickup, and sort order.
+    var materialFilter by remember { mutableStateOf<MaterialCategory?>(null) }
+    var pickupOnly by remember { mutableStateOf(false) }
+    var sortByTopRate by remember { mutableStateOf(false) }
+    val availableMaterials = remember(recyclers) {
+        recyclers.flatMap { it.acceptedCategories }.distinct()
+    }
+    val visibleRecyclers = remember(recyclers, materialFilter, pickupOnly, sortByTopRate) {
+        recyclers
+            .filter { rec ->
+                (materialFilter == null || rec.acceptedCategories.contains(materialFilter)) &&
+                    (!pickupOnly || rec.doorstepPickup)
+            }
+            .let { list ->
+                if (sortByTopRate) list.sortedByDescending { it.buyingRates.values.maxOrNull() ?: 0.0 }
+                else list.sortedBy { it.distanceKm }
+            }
+    }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -2743,7 +2787,78 @@ fun RecyclersTab(
             }
         }
 
-        items(recyclers) { rec ->
+        item {
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Verified options (${visibleRecyclers.size})",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = TextPrimaryDark,
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        label = "Pickup",
+                        selected = pickupOnly,
+                        onClick = { pickupOnly = !pickupOnly }
+                    )
+                    FilterChip(
+                        label = if (sortByTopRate) "Top rate" else "Nearest",
+                        selected = sortByTopRate,
+                        onClick = { sortByTopRate = !sortByTopRate }
+                    )
+                }
+
+                if (availableMaterials.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        item {
+                            FilterChip(
+                                label = "All materials",
+                                selected = materialFilter == null,
+                                onClick = { materialFilter = null }
+                            )
+                        }
+                        items(availableMaterials) { cat ->
+                            FilterChip(
+                                label = when (language) {
+                                    Language.ENGLISH -> cat.titleEn
+                                    Language.HINDI -> cat.titleHi
+                                    Language.MARATHI -> cat.titleMr
+                                },
+                                selected = materialFilter == cat,
+                                onClick = {
+                                    materialFilter = if (materialFilter == cat) null else cat
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (visibleRecyclers.isEmpty()) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "No verified recycler matches these filters. Clear a filter to see every authorized option.",
+                        fontSize = 12.sp,
+                        color = TextSecondaryMuted,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
+            }
+        }
+
+        items(visibleRecyclers) { rec ->
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -2779,6 +2894,44 @@ fun RecyclersTab(
                         fontWeight = FontWeight.SemiBold,
                         color = SuccessGreen
                     )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Verified-only badge + service area (dataset-driven).
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = SuccessGreen.copy(alpha = 0.12f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.VerifiedUser,
+                                    contentDescription = null,
+                                    tint = SuccessGreen,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Authorized • Active",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SuccessGreen
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Serves: ${rec.serviceArea.ifBlank { rec.city }}",
+                            fontSize = 10.sp,
+                            color = TextSecondaryMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(4.dp))
 
@@ -2816,6 +2969,34 @@ fun RecyclersTab(
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
+
+                    // Live offered rates per accepted material (Supabase dataset).
+                    Text(
+                        text = "Offered rates (live)",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimaryDark
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(rec.acceptedCategories) { cat ->
+                            val rate = rec.buyingRates[cat]
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MintLight
+                            ) {
+                                Text(
+                                    text = "${cat.titleEn}: ${if (rate != null) "₹${rate.toInt()}/kg" else "—"}",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ForestGreenPrimary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     // Live buying rate + supported categories (from real recycler data)
                     val bestRate = rec.buyingRates.values.maxOrNull()

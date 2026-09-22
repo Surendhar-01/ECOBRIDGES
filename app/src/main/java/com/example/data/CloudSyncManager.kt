@@ -148,13 +148,26 @@ object CloudSyncManager {
         val distance_km: Double = 0.0,
         val cpcb_reg_no: String? = null,
         val authorization_validity: String? = null,
+        val authorization_status: String? = null,
+        val service_area: String? = null,
         val phone: String? = null,
+        val contact_email: String? = null,
         val accepted_categories: String? = null,
         val doorstep_pickup: Boolean = false,
         val min_weight_for_pickup_kg: Double = 0.0,
         val rating: Double = 0.0,
         val latitude: Double = 0.0,
         val longitude: Double = 0.0
+    )
+
+    /** Offered rate per accepted material from `recycler_offered_rates`. */
+    @Serializable
+    data class RecyclerRateDto(
+        val rate_id: String,
+        val recycler_id: String,
+        val category_name: String,
+        val rate_per_kg: Double = 0.0,
+        val unit: String = "₹/kg"
     )
 
     /** Aggregated national metrics from the `v_admin_metrics` role view. */
@@ -324,6 +337,19 @@ object CloudSyncManager {
                 .decodeList<RemoteCollector>()
         } catch (e: Exception) {
             Log.w(TAG, "Nearby collectors fetch failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /** Fetch the offered-rates table. Public read; keyed by recycler. */
+    suspend fun fetchRecyclerOfferedRates(): List<RecyclerRateDto> {
+        if (!SupabaseAuthConfig.isConfigured()) return emptyList()
+        return try {
+            SupabaseAuthConfig.client.from("recycler_offered_rates")
+                .select()
+                .decodeList<RecyclerRateDto>()
+        } catch (e: Exception) {
+            Log.w(TAG, "Offered rates fetch failed: ${e.message}")
             emptyList()
         }
     }
@@ -727,7 +753,10 @@ fun CloudSyncManager.RemoteRecycler.toEntity(): RecyclerEntity = RecyclerEntity(
     distanceKm = distance_km,
     cpcbRegNo = cpcb_reg_no ?: "",
     authorizationValidity = authorization_validity ?: "",
+    authorizationStatus = authorization_status?.lowercase() ?: "active",
+    serviceArea = service_area ?: "",
     phone = phone ?: "",
+    contactEmail = contact_email ?: "",
     acceptedCategoriesJoined = accepted_categories ?: "",
     ratesJson = "",
     doorstepPickup = doorstep_pickup,
@@ -736,3 +765,18 @@ fun CloudSyncManager.RemoteRecycler.toEntity(): RecyclerEntity = RecyclerEntity(
     latitude = latitude,
     longitude = longitude
 )
+
+/** Encodes cloud offered rates for Room caching ("CATEGORY=rate;..."). */
+fun encodeRecyclerRates(rates: Map<String, Double>): String =
+    rates.entries.joinToString(";") { "${it.key}=${it.value}" }
+
+/** Decodes cached offered rates; unknown/malformed parts are ignored. */
+fun decodeRecyclerRates(ratesJson: String): Map<String, Double> {
+    if (ratesJson.isBlank()) return emptyMap()
+    return ratesJson.split(";").mapNotNull { part ->
+        val kv = part.split("=", limit = 2)
+        if (kv.size != 2) return@mapNotNull null
+        val rate = kv[1].toDoubleOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
+        kv[0].trim().ifBlank { null }?.let { it to rate }
+    }.toMap()
+}

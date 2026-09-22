@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.CoroutineScope
 
 /**
@@ -29,7 +31,7 @@ import kotlinx.coroutines.CoroutineScope
         QuotationEntity::class,
         AuditLogEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class EwasteDatabase : RoomDatabase() {
@@ -48,6 +50,15 @@ abstract class EwasteDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: EwasteDatabase? = null
 
+        /** v5 -> v6: mandatory recycler dataset columns (status, area, mail). */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE authorized_recyclers ADD COLUMN authorizationStatus TEXT NOT NULL DEFAULT 'active'")
+                db.execSQL("ALTER TABLE authorized_recyclers ADD COLUMN serviceArea TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE authorized_recyclers ADD COLUMN contactEmail TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getDatabase(context: Context, @Suppress("UNUSED_PARAMETER") scope: CoroutineScope): EwasteDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -55,6 +66,7 @@ abstract class EwasteDatabase : RoomDatabase() {
                     EwasteDatabase::class.java,
                     "ewaste_moefcc_database"
                 )
+                    .addMigrations(MIGRATION_5_6)
                     .fallbackToDestructiveMigration(true)
                     .build()
                 INSTANCE = instance

@@ -160,6 +160,8 @@ data class AuthorizedRecycler(
     val distanceKm: Double,
     val cpcbRegNo: String,
     val authorizationValidity: String,
+    val authorizationStatus: String = "active",
+    val serviceArea: String = "",
     val phone: String,
     val acceptedCategories: List<MaterialCategory>,
     val buyingRates: Map<MaterialCategory, Double>,

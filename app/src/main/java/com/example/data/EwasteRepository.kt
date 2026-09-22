@@ -35,7 +35,11 @@ class EwasteRepository(
     }
 
     val allRecyclers: Flow<List<AuthorizedRecycler>> = recyclerDao.getAllRecyclers().map { entities ->
+        // Only authorized + active recyclers with a valid registration are
+        // ever shown as verified options. Suspended/expired/pending rows and
+        // rows without a CPCB number are hidden, never fabricated.
         entities.map { it.toDomainModel() }
+            .filter { it.authorizationStatus == "active" && it.cpcbRegNo.isNotBlank() }
     }
 
     val allSafetyGuidelines: Flow<List<HazardSafetyInfo>> = safetyDao.getAllGuidelines().map { entities ->
@@ -525,8 +529,12 @@ private fun RecyclerEntity.toDomainModel(): AuthorizedRecycler {
     val accepted = acceptedCategoriesJoined.split(",")
         .mapNotNull { catStr -> runCatching { MaterialCategory.valueOf(catStr.trim()) }.getOrNull() }
 
-    // Standard baseline rates
-    val rates = MaterialCategory.values().associateWith { it.defaultRatePerKg }
+    // Offered rates come from Supabase (`recycler_offered_rates`, cached in
+    // ratesJson); any category without a cloud rate falls back to baseline.
+    val cloudRates = decodeRecyclerRates(ratesJson)
+    val rates = MaterialCategory.values().associateWith { cat ->
+        cloudRates[cat.name] ?: cat.defaultRatePerKg
+    }
 
     return AuthorizedRecycler(
         recyclerId = recyclerId,
@@ -536,6 +544,8 @@ private fun RecyclerEntity.toDomainModel(): AuthorizedRecycler {
         distanceKm = distanceKm,
         cpcbRegNo = cpcbRegNo,
         authorizationValidity = authorizationValidity,
+        authorizationStatus = authorizationStatus,
+        serviceArea = serviceArea,
         phone = phone,
         acceptedCategories = accepted,
         buyingRates = rates,

@@ -236,9 +236,12 @@ CREATE TABLE IF NOT EXISTS authorized_recyclers (
     facility_location    TEXT,
     city                 TEXT,
     distance_km          DOUBLE PRECISION DEFAULT 0,
-    cpcb_reg_no          TEXT,
+    cpcb_reg_no          TEXT NOT NULL,
     authorization_validity TEXT,
+    authorization_status TEXT NOT NULL DEFAULT 'active',
+    service_area         TEXT,
     phone                TEXT,
+    contact_email        TEXT,
     accepted_categories  TEXT,
     doorstep_pickup      BOOLEAN DEFAULT FALSE,
     min_weight_for_pickup_kg DOUBLE PRECISION,
@@ -264,6 +267,61 @@ VALUES
     ('REC-CPCB-MH-003', 'SwachhBharat E-Waste Recyclers', 'Pimpri-Chinchwad MIDC Phase 2, Pune', 'Pune', 120.0, 'CPCB/EPR-REC/2024/MH-0205', 'Valid until Jan 2029', '+91 98902 55192', 'PCB_BOARDS,BATTERIES,LCD_PANELS,MOTORS_MAGNETS', TRUE, 40.0, 4.8, 18.6298, 73.7997),
     ('REC-CPCB-MH-004', 'Kurla Aggregator & Dismantling Center', 'LBS Marg, Kurla West, Mumbai', 'Mumbai', 2.8, 'CPCB/EPR-REC/2023/MH-0091', 'Valid until Nov 2027', '+91 98205 11299', 'PCB_BOARDS,CABLES_WIRES,BATTERIES,CRTS_MONITORS,LCD_PANELS,MOTORS_MAGNETS,MIXED_PLASTICS', TRUE, 15.0, 4.6, 19.0728, 72.8795)
 ON CONFLICT (recycler_id) DO NOTHING;
+
+-- Backfill + validation for the mandatory recycler dataset
+-- (mirrors 0005_recycler_dataset.sql for fresh projects).
+UPDATE authorized_recyclers
+SET service_area = COALESCE(NULLIF(service_area, ''), city, 'Mumbai & Pune Region')
+WHERE service_area IS NULL OR service_area = '';
+
+ALTER TABLE authorized_recyclers
+    DROP CONSTRAINT IF EXISTS authorized_recyclers_status_check;
+ALTER TABLE authorized_recyclers
+    ADD CONSTRAINT authorized_recyclers_status_check
+    CHECK (authorization_status IN ('active', 'suspended', 'expired', 'pending'));
+
+-- ============================================================================
+-- 9b) Offered rates per accepted material (one row per recycler/category).
+--     Public reads; service-role writes. Rate must be positive.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS recycler_offered_rates (
+    rate_id        TEXT PRIMARY KEY,
+    recycler_id    TEXT NOT NULL REFERENCES authorized_recyclers(recycler_id)
+                   ON DELETE CASCADE,
+    category_name  TEXT NOT NULL,
+    rate_per_kg    DOUBLE PRECISION NOT NULL,
+    unit           TEXT NOT NULL DEFAULT '₹/kg',
+    effective_from TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (recycler_id, category_name)
+);
+
+ALTER TABLE recycler_offered_rates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS recycler_offered_rates_public_read ON recycler_offered_rates;
+CREATE POLICY recycler_offered_rates_public_read ON recycler_offered_rates
+    FOR SELECT
+    USING (true);
+
+GRANT SELECT ON recycler_offered_rates TO anon, authenticated;
+
+ALTER TABLE recycler_offered_rates
+    DROP CONSTRAINT IF EXISTS recycler_offered_rates_positive_check;
+ALTER TABLE recycler_offered_rates
+    ADD CONSTRAINT recycler_offered_rates_positive_check
+    CHECK (rate_per_kg > 0);
+
+INSERT INTO recycler_offered_rates
+    (rate_id, recycler_id, category_name, rate_per_kg, unit)
+VALUES
+    ('RATE-001-PCB', 'REC-CPCB-MH-001', 'PCB_BOARDS', 380, '₹/kg'),
+    ('RATE-001-CAB', 'REC-CPCB-MH-001', 'CABLES_WIRES', 460, '₹/kg'),
+    ('RATE-001-BAT', 'REC-CPCB-MH-001', 'BATTERIES', 160, '₹/kg'),
+    ('RATE-001-MOT', 'REC-CPCB-MH-001', 'MOTORS_MAGNETS', 210, '₹/kg'),
+    ('RATE-001-LCD', 'REC-CPCB-MH-001', 'LCD_PANELS', 120, '₹/kg')
+ON CONFLICT (recycler_id, category_name) DO UPDATE SET
+    rate_per_kg = EXCLUDED.rate_per_kg,
+    unit = EXCLUDED.unit,
+    effective_from = now();
 
 -- ============================================================================
 -- 10) Secure `lot-photos` Storage bucket (private). Uploads are scoped to the
@@ -300,3 +358,47 @@ CREATE POLICY lot_photos_storage_delete ON storage.objects
         bucket_id = 'lot-photos'
         AND (storage.foldername(name))[1] = auth.uid()::text
     );
+
+-- Fast lookup indexes on profiles
+CREATE INDEX IF NOT EXISTS profiles_email_lower_idx ON public.profiles (lower(email));
+CREATE INDEX IF NOT EXISTS profiles_phone_number_idx ON public.profiles (phone_number);
+
+-- Secure role lookup function for cross-role login prevention
+CREATE OR REPLACE FUNCTION public.get_profile_by_identifier(p_identifier TEXT)
+RETURNS TABLE (
+    auth_user_id UUID,
+    role TEXT,
+    account_status TEXT,
+    display_name TEXT,
+    entity_name TEXT,
+    statutory_identifier TEXT,
+    phone_number TEXT,
+    email TEXT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_clean_digits TEXT := right(regexp_replace(COALESCE(p_identifier, ''), '\D', '', 'g'), 10);
+    v_clean_email TEXT := lower(trim(COALESCE(p_identifier, '')));
+BEGIN
+    RETURN QUERY
+    SELECT 
+        p.auth_user_id,
+        p.role,
+        p.account_status,
+        p.display_name,
+        p.entity_name,
+        p.statutory_identifier,
+        p.phone_number,
+        p.email
+    FROM public.profiles p
+    WHERE (v_clean_email <> '' AND lower(COALESCE(p.email, '')) = v_clean_email)
+       OR (length(v_clean_digits) = 10 AND right(regexp_replace(COALESCE(p.phone_number, ''), '\D', '', 'g'), 10) = v_clean_digits)
+    LIMIT 1;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_profile_by_identifier(TEXT) TO anon, authenticated, service_role;
+

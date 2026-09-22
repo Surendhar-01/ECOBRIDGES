@@ -50,6 +50,10 @@ export class AuthService {
    */
   async requestMobileOtp(dto: RequestOtpDto): Promise<{ success: boolean; message: string; cooldownSeconds: number }> {
     const cleanPhone = dto.phoneNumber.replace(/\D/g, '');
+
+    // Strict role validation against Supabase profiles table
+    await this.validateUserRole(cleanPhone, dto.role);
+
     const now = Date.now();
 
     // Check resend cooldown (45 seconds)
@@ -108,6 +112,10 @@ export class AuthService {
    */
   async verifyMobileOtp(dto: VerifyOtpDto): Promise<AuthResponse> {
     const cleanPhone = dto.phoneNumber.replace(/\D/g, '');
+
+    // Strict role validation against Supabase profiles table
+    await this.validateUserRole(cleanPhone, dto.role);
+
     const session = this.otpSessions.get(cleanPhone);
 
     if (!session) {
@@ -157,6 +165,9 @@ export class AuthService {
       throw new ForbiddenException('Account status is SUSPENDED due to statutory environmental compliance flag.');
     }
 
+    // Strict dynamic role validation against Supabase profiles table
+    await this.validateUserRole(normalizedEmail, dto.role);
+
     // Role-based credential conflict validation
     if (normalizedEmail.includes('admin') && dto.role === RoleType.INFORMAL_COLLECTOR) {
       throw new ForbiddenException('Role conflict: Officer credentials cannot access Informal Collector portal.');
@@ -187,6 +198,9 @@ export class AuthService {
       throw new UnauthorizedException('Invalid Google OAuth token received from client.');
     }
 
+    // Strict role validation against Supabase profiles table
+    await this.validateUserRole(normalizedEmail, dto.role);
+
     const displayName = dto.displayName || normalizedEmail.split('@')[0].replace('.', ' ');
 
     return this.executeStatutoryVerification({
@@ -196,6 +210,109 @@ export class AuthService {
       targetRole: dto.role,
       authMethod: 'GOOGLE_OAUTH',
     });
+  }
+
+  /**
+   * Validates that the user's registered role in Supabase profiles matches the requested login portal.
+   * Throws ForbiddenException if there is a role mismatch.
+   */
+  private async validateUserRole(identifier: string, requestedRole: RoleType): Promise<void> {
+    const cleanDigits = identifier.replace(/\D/g, '').slice(-10);
+    const cleanEmail = identifier.trim().toLowerCase();
+
+    try {
+      let query = this.supabase.from('profiles').select('id, auth_user_id, role, account_status, display_name, email, phone_number');
+      if (cleanEmail.includes('@')) {
+        query = query.eq('email', cleanEmail);
+      } else if (cleanDigits.length === 10) {
+        query = query.or(`phone_number.ilike.%${cleanDigits}`);
+      } else {
+        query = query.eq('email', cleanEmail);
+      }
+
+      const { data, error } = await query.maybeSingle();
+      if (error) {
+        this.logger.warn(`Profile lookup failed for ${identifier}: ${error.message}`);
+        throw new BadRequestException('Could not verify registration. Please check your connection and try again.');
+      }
+      if (!data || !data.role) {
+        throw new ForbiddenException(
+          `No account is registered with these details for the ${this.roleTitle(requestedRole)} portal. Please sign up first.`
+        );
+      }
+      const registeredRole = this.mapSlugToRole(data.role);
+      if (!registeredRole) {
+        throw new ForbiddenException(
+          `This account has no recognized role assigned. Contact the CPCB helpdesk to complete onboarding.`
+        );
+      }
+      if (registeredRole !== requestedRole) {
+        this.logger.warn(`Cross-role login blocked for ${identifier}: registered as ${registeredRole}, requested ${requestedRole}`);
+        throw new ForbiddenException(
+          `Access Denied: This account is registered as ${this.roleTitle(registeredRole)}. You cannot log in to the ${this.roleTitle(requestedRole)} portal.`
+        );
+      }
+    } catch (err) {
+      if (err instanceof ForbiddenException) {
+        throw err;
+      }
+      this.logger.warn(`Could not verify profile from Supabase: ${err?.message}`);
+    }
+  }
+
+  /**
+   * Public role-truth lookup for clients (e.g. Android demo-OTP pre-check).
+   * Service-role read from `profiles`; returns the registered role slug or
+   * null when the identifier is unknown. Never throws — callers treat null
+   * as "no registered role".
+   */
+  async lookupRegisteredRole(identifier: string): Promise<string | null> {
+    const cleanDigits = identifier.replace(/\D/g, '').slice(-10);
+    const cleanEmail = identifier.trim().toLowerCase();
+    try {
+      let query = this.supabase.from('profiles').select('role');
+      if (cleanEmail.includes('@')) {
+        query = query.eq('email', cleanEmail);
+      } else if (cleanDigits.length === 10) {
+        query = query.or(`phone_number.ilike.%${cleanDigits}`);
+      } else {
+        return null;
+      }
+      const { data, error } = await query.maybeSingle();
+      if (error || !data?.role) return null;
+      return data.role as string;
+    } catch (err) {
+      this.logger.warn(`Role lookup failed: ${err?.message}`);
+      return null;
+    }
+  }
+
+  private mapSlugToRole(slug: string): RoleType | null {    switch (slug?.trim().toLowerCase()) {
+      case 'informal_collector':
+      case 'collector':
+        return RoleType.INFORMAL_COLLECTOR;
+      case 'formal_recycler':
+      case 'recycler':
+        return RoleType.FORMAL_RECYCLER;
+      case 'government_admin':
+      case 'admin':
+        return RoleType.GOVERNMENT_ADMIN;
+      default:
+        return null;
+    }
+  }
+
+  private roleTitle(role: RoleType): string {
+    switch (role) {
+      case RoleType.INFORMAL_COLLECTOR:
+        return 'Informal Collector';
+      case RoleType.FORMAL_RECYCLER:
+        return 'Formal Recycler';
+      case RoleType.GOVERNMENT_ADMIN:
+        return 'Government Admin';
+      default:
+        return role;
+    }
   }
 
   /**

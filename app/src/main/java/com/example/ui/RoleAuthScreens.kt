@@ -48,6 +48,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -114,7 +115,8 @@ import kotlinx.coroutines.launch
 
 /**
  * Unified authentication screen for all three roles:
- * - Sign Up (per-role registration stored in Supabase)
+ * - Sign Up for collectors/recyclers (registration stored in Supabase;
+ *   admin accounts are provisioned centrally — no self-registration)
  * - Email & Password sign-in with REGISTERED credentials only
  * - OTP second factor (demo on-device code shown in-app / real SMS hook)
  * - Continue with Google (Credential Manager + Supabase ID token exchange)
@@ -503,13 +505,20 @@ fun UnifiedRoleAuthScreen(
                     infoMessage = null
                 }
                 AuthUiAction.OpenRegister -> {
-                    authStage = AuthStage.SIGN_UP
-                    errorMessage = null
-                    infoMessage = null
-                    voiceEngine?.speak(
-                        "Opening registration. Please fill your details to create your account.",
-                        language
-                    )
+                    if (role == RoleType.GOVERNMENT_ADMIN) {
+                        voiceEngine?.speak(
+                            "Administrator accounts are created centrally by C P C B. Registration here is for collectors and recyclers.",
+                            language
+                        )
+                    } else {
+                        authStage = AuthStage.SIGN_UP
+                        errorMessage = null
+                        infoMessage = null
+                        voiceEngine?.speak(
+                            "Opening registration. Please fill your details to create your account.",
+                            language
+                        )
+                    }
                 }
                 AuthUiAction.GoBack -> onBack()
             }
@@ -519,6 +528,47 @@ fun UnifiedRoleAuthScreen(
     // If already authenticated, display the matching role dashboard
     if (authenticatedUser != null) {
         val user = authenticatedUser!!
+        if (user.role != role) {
+            LaunchedEffect(user.role, role) {
+                authService.signOut()
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(BackgroundCream),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "Access Denied",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "This account is registered as ${authService.roleTitle(user.role)}. It cannot access the ${authService.roleTitle(role)} portal.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = TextPrimaryDark,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(
+                        onClick = {
+                            authService.signOut()
+                            onBack()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = ForestGreenPrimary)
+                    ) {
+                        Text("Return to Role Selection", color = Color.White)
+                    }
+                }
+            }
+            return
+        }
         when (user.role) {
             RoleType.INFORMAL_COLLECTOR -> {
                 val collectorVm = remember {
@@ -820,7 +870,9 @@ fun UnifiedRoleAuthScreen(
             }
 
             // 4. Form: registration, credential sign-in, or OTP challenge.
-            if (authStage == AuthStage.SIGN_UP) {
+            // Self-registration serves collectors and recyclers. Admin
+            // accounts are provisioned centrally — no sign-up UI here.
+            if (authStage == AuthStage.SIGN_UP && role != RoleType.GOVERNMENT_ADMIN) {
                 SignUpCard(
                     role = role,
                     language = language,
@@ -881,7 +933,14 @@ fun UnifiedRoleAuthScreen(
                             phoneNumber = ""
                             errorMessage = null
                             infoMessage = null
-                        }
+                        },
+                        onSwitchToSignUp = if (role != RoleType.GOVERNMENT_ADMIN) {
+                            {
+                                authStage = AuthStage.SIGN_UP
+                                errorMessage = null
+                                infoMessage = null
+                            }
+                        } else null
                     )
                 }
 
@@ -914,7 +973,8 @@ fun UnifiedRoleAuthScreen(
                                 signupEmail = emailInput
                                 errorMessage = null
                                 infoMessage = null
-                            }
+                            },
+                            showSignUp = role != RoleType.GOVERNMENT_ADMIN
                         )
                     }
                 }
@@ -1019,7 +1079,8 @@ private fun PhoneOtpAuthCard(
     language: Language,
     onGenerateOtp: () -> Unit,
     onVerifyLogin: () -> Unit,
-    onChangeNumber: () -> Unit
+    onChangeNumber: () -> Unit,
+    onSwitchToSignUp: (() -> Unit)? = null
 ) {
     // Auto sign-in: submit the moment a complete 6-digit code is present —
     // typed, pasted, or auto-filled. The typed path also fires onCompleted
@@ -1145,6 +1206,26 @@ private fun PhoneOtpAuthCard(
                         color = TextSecondaryMuted,
                         lineHeight = 14.sp
                     )
+
+                    // Self-registration entry for collectors/recyclers.
+                    // Hidden on the admin portal (central provisioning only).
+                    if (onSwitchToSignUp != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        TextButton(
+                            onClick = onSwitchToSignUp,
+                            enabled = !isVerifying,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("auth_switch_to_signup")
+                        ) {
+                            Text(
+                                text = "New here? Create an account",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = ForestGreenPrimary
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1748,7 +1829,8 @@ private fun EmailPasswordAuthCard(
     isVerifying: Boolean,
     language: Language,
     onLogin: () -> Unit,
-    onSwitchToSignUp: () -> Unit
+    onSwitchToSignUp: () -> Unit,
+    showSignUp: Boolean = true
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -1849,19 +1931,23 @@ private fun EmailPasswordAuthCard(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            TextButton(
-                onClick = onSwitchToSignUp,
-                enabled = !isVerifying,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("auth_switch_to_signup")
-            ) {
-                Text(
-                    text = "New here? Create an account",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = ForestGreenPrimary
-                )
+            // Self-registration is offered to collectors and recyclers only —
+            // admin accounts are provisioned centrally, so no entry point here.
+            if (showSignUp) {
+                TextButton(
+                    onClick = onSwitchToSignUp,
+                    enabled = !isVerifying,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("auth_switch_to_signup")
+                ) {
+                    Text(
+                        text = "New here? Create an account",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ForestGreenPrimary
+                    )
+                }
             }
         }
     }

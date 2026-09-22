@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.annotation.VisibleForTesting
 import com.example.BuildConfig
 import com.example.model.RoleType
+import com.example.network.NestJsAuthClient
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.OtpType
 import io.github.jan.supabase.auth.exception.AuthRestException
@@ -64,6 +65,84 @@ class SupabaseAuthService private constructor(private val context: Context) {
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("supabase_auth_session", Context.MODE_PRIVATE)
+
+    private val registeredAccountsPrefs: SharedPreferences =
+        context.getSharedPreferences("registered_user_roles", Context.MODE_PRIVATE)
+
+    fun roleTitle(role: RoleType): String = when (role) {
+        RoleType.INFORMAL_COLLECTOR -> "Informal Collector"
+        RoleType.FORMAL_RECYCLER -> "Formal Recycler"
+        RoleType.GOVERNMENT_ADMIN -> "Government Admin"
+    }
+
+    fun roleToSlug(role: RoleType): String = when (role) {
+        RoleType.INFORMAL_COLLECTOR -> "informal_collector"
+        RoleType.FORMAL_RECYCLER -> "formal_recycler"
+        RoleType.GOVERNMENT_ADMIN -> "government_admin"
+    }
+
+    fun rememberLocalRegistration(identifier: String, role: RoleType) {
+        val clean = identifier.trim()
+        if (clean.isBlank()) return
+        val editor = registeredAccountsPrefs.edit()
+        editor.putString(clean.lowercase(), roleToSlug(role))
+        val digits = clean.filter { it.isDigit() }
+        if (digits.length >= 10) {
+            editor.putString(digits.takeLast(10), roleToSlug(role))
+        }
+        editor.apply()
+    }
+
+    suspend fun checkRegisteredRole(identifier: String): RoleType? {
+        val clean = identifier.trim()
+        if (clean.isBlank()) return null
+        val cleanDigits = clean.filter { it.isDigit() }.let {
+            if (it.length >= 10) it.takeLast(10) else it
+        }
+
+        // 1. Check local persistent cache
+        val localSlug = registeredAccountsPrefs.getString(clean.lowercase(), null)
+            ?: if (cleanDigits.isNotEmpty()) registeredAccountsPrefs.getString(cleanDigits, null) else null
+        if (localSlug != null) {
+            val localRole = mapRole(localSlug)
+            if (localRole != null) return localRole
+        }
+
+        // 2. Query Supabase
+        if (isConfigured()) {
+            try {
+                val profile = SupabaseAuthConfig.client.from("profiles")
+                    .select {
+                        filter {
+                            if (clean.contains("@")) {
+                                eq("email", clean.lowercase())
+                            } else if (cleanDigits.length == 10) {
+                                eq("phone_number", "+91 $cleanDigits")
+                            } else {
+                                eq("email", clean.lowercase())
+                            }
+                        }
+                    }
+                    .decodeList<ProfileRow>()
+                    .firstOrNull()
+
+                val foundRole = profile?.role
+                if (!foundRole.isNullOrBlank()) {
+                    val role = mapRole(foundRole)
+                    if (role != null) {
+                        rememberLocalRegistration(clean, role)
+                        return role
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "checkRegisteredRole lookup note: ${e.message}")
+            }
+        }
+
+        return null
+    }
 
     private val _currentPipelineStep = MutableStateFlow(AuthPipelineStep.IDLE)
     val currentPipelineStep: StateFlow<AuthPipelineStep> = _currentPipelineStep.asStateFlow()
@@ -161,13 +240,30 @@ class SupabaseAuthService private constructor(private val context: Context) {
             if (it.length >= 10) it.takeLast(10) else it
         }.ifBlank { "9876543210" }
 
+        // Strict role pre-check: prevent cross-role OTP requests
+        if (targetRole != null) {
+            val registeredRole = checkRegisteredRole(cleanPhone)
+            if (registeredRole != null && registeredRole != targetRole) {
+                val registeredTitle = roleTitle(registeredRole)
+                val targetTitle = roleTitle(targetRole)
+                Log.w(TAG, "Phone OTP rejected for +91 $cleanPhone: registered as $registeredTitle, requested $targetTitle")
+                return Result.failure(
+                    IllegalStateException(
+                        "Access Denied: Mobile number +91 $cleanPhone is registered as $registeredTitle. You cannot log in to the $targetTitle portal."
+                    )
+                )
+            }
+        }
+
         val now = System.currentTimeMillis()
         val code = String.format("%06d", Random.nextInt(100000, 999999))
         activeOtpSession = OtpSession(
             destination = destination,
             phoneNumber = cleanPhone,
             email = email,
+            authUserId = null,
             otpCode = code,
+            targetRole = targetRole,
             createdAt = now,
             expiryTimestamp = now + OTP_VALIDITY_MS,
             attemptsRemaining = MAX_OTP_ATTEMPTS,
@@ -235,8 +331,26 @@ class SupabaseAuthService private constructor(private val context: Context) {
             ?: session?.phoneNumber?.filter { it.isDigit() }?.takeLast(10)?.ifBlank { null }
             ?: "9876543210"
 
+        // Enforce role: If registered for a different role, reject immediately
+        val registeredRole = checkRegisteredRole(cleanPhone)
+        if (registeredRole != null && registeredRole != targetRole) {
+            activeOtpSession = null
+            _devDisplayOtp.value = null
+            val registeredTitle = roleTitle(registeredRole)
+            val targetTitle = roleTitle(targetRole)
+            return failure(
+                AuthErrorCode.ROLE_MISMATCH,
+                AuthPipelineStep.VERIFYING_ROLE,
+                "Access Denied: Mobile number +91 $cleanPhone is registered as $registeredTitle. You cannot log in to the $targetTitle portal."
+            )
+        }
+
         activeOtpSession = null
         _devDisplayOtp.value = null
+
+        // Persist role registration for this mobile number
+        rememberLocalRegistration(cleanPhone, targetRole)
+        email?.let { rememberLocalRegistration(it, targetRole) }
 
         val profileUser = createDemoProfile(
             role = targetRole,
@@ -322,9 +436,13 @@ class SupabaseAuthService private constructor(private val context: Context) {
                 }
             }
             RoleType.GOVERNMENT_ADMIN -> {
-                if (statutory.isEmpty()) {
-                    return failure(AuthErrorCode.INVALID_CREDENTIALS, AuthPipelineStep.AUTHENTICATING_USER, "Please enter your department / employee ID.")
-                }
+                // Admin accounts are provisioned centrally by CPCB — there is
+                // no self-registration for this portal.
+                return failure(
+                    AuthErrorCode.ROLE_MISMATCH,
+                    AuthPipelineStep.AUTHENTICATING_USER,
+                    "Admin accounts are created centrally by CPCB. Self-registration here is for collectors and recyclers only."
+                )
             }
             RoleType.INFORMAL_COLLECTOR -> Unit
         }
@@ -356,6 +474,10 @@ class SupabaseAuthService private constructor(private val context: Context) {
             return failure(code, AuthPipelineStep.AUTHENTICATING_USER, hint)
         }
 
+        // Persist registration in local cache immediately
+        rememberLocalRegistration(trimmedEmail, targetRole)
+        rememberLocalRegistration(cleanPhone, targetRole)
+
         val user = SupabaseAuthConfig.client.auth.currentUserOrNull()
         if (user == null) {
             // "Confirm email" is ON: identity exists but no session yet.
@@ -364,6 +486,24 @@ class SupabaseAuthService private constructor(private val context: Context) {
                 AuthPipelineStep.AUTHENTICATING_USER,
                 "Account created for $trimmedEmail. Please confirm your email inbox, then sign in. (Demo tip: turn OFF 'Confirm email' in Supabase Auth settings.)"
             )
+        }
+
+        // Direct upsert to ensure public.profiles row exists with exact role
+        try {
+            SupabaseAuthConfig.client.from("profiles").upsert(
+                buildJsonObject {
+                    put("auth_user_id", JsonPrimitive(user.id))
+                    put("role", JsonPrimitive(roleToSlug(targetRole)))
+                    put("account_status", JsonPrimitive("active"))
+                    put("display_name", JsonPrimitive(name))
+                    put("entity_name", JsonPrimitive(entity))
+                    put("statutory_identifier", JsonPrimitive(statutory))
+                    put("phone_number", JsonPrimitive("+91 ${cleanPhone.takeLast(10)}"))
+                    put("email", JsonPrimitive(trimmedEmail))
+                }
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Direct profile upsert note: ${e.message}")
         }
 
         // The trigger provisions the profile in the same transaction — poll briefly.
@@ -413,9 +553,10 @@ class SupabaseAuthService private constructor(private val context: Context) {
      * Step 2 — Sign in with the REGISTERED email + password.
      *
      * Credentials are validated by Supabase Auth: unknown emails and wrong
-     * passwords fail here and nothing proceeds. On success the login is parked
-     * ([AuthResult.awaitingOtp]) until [verifyLoginOtp] confirms the OTP second
-     * factor; the dashboard opens only after the role check passes.
+     * passwords fail here and nothing proceeds. The user's role is verified
+     * immediately against their registered role in Supabase. Cross-role logins
+     * are strictly rejected and session dropped. On success the login is parked
+     * ([AuthResult.awaitingOtp]) until [verifyLoginOtp] confirms the OTP second factor.
      */
     suspend fun loginWithEmail(
         email: String,
@@ -433,24 +574,83 @@ class SupabaseAuthService private constructor(private val context: Context) {
         }
 
         _currentPipelineStep.value = AuthPipelineStep.AUTHENTICATING_USER
+
+        // Step 1: Pre-validation of role from local cache and remote registry
+        val registeredRole = checkRegisteredRole(trimmedEmail)
+        if (registeredRole != null && registeredRole != targetRole) {
+            val regTitle = roleTitle(registeredRole)
+            val targetTitle = roleTitle(targetRole)
+            Log.w(TAG, "Pre-auth cross-role attempt blocked: $trimmedEmail is $regTitle, tried $targetTitle")
+            return failure(
+                AuthErrorCode.ROLE_MISMATCH,
+                AuthPipelineStep.VERIFYING_ROLE,
+                "Access Denied: This account is registered as $regTitle. You cannot log in to the $targetTitle portal."
+            )
+        }
+
         var userId: String? = null
-        try {
-            if (isConfigured()) {
+        if (isConfigured()) {
+            try {
                 SupabaseAuthConfig.client.auth.signInWith(Email) {
                     this.email = trimmedEmail
                     this.password = trimmedPassword
                 }
                 userId = SupabaseAuthConfig.client.auth.currentUserOrNull()?.id
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Supabase sign-in failed: ${e.message}")
+                val code = mapSignInException(e)
+                val msg = if (code == AuthErrorCode.EMAIL_NOT_CONFIRMED) {
+                    "Please confirm your email address before signing in."
+                } else {
+                    "Invalid email or password. Please check your credentials."
+                }
+                return failure(code, AuthPipelineStep.AUTHENTICATING_USER, msg)
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "Supabase sign-in exception: ${e.message}; using demo OTP challenge")
+
+            // Step 2: Validate live profile role from Supabase database
+            val authUser = SupabaseAuthConfig.client.auth.currentUserOrNull()
+            if (authUser != null) {
+                val profile = fetchProfile(authUser.id)
+                val assignedRole = profile?.role?.let { mapRole(it) }
+                if (assignedRole != null && assignedRole != targetRole) {
+                    signOut()
+                    val regTitle = roleTitle(assignedRole)
+                    val targetTitle = roleTitle(targetRole)
+                    rememberLocalRegistration(trimmedEmail, assignedRole)
+                    return failure(
+                        AuthErrorCode.ROLE_MISMATCH,
+                        AuthPipelineStep.VERIFYING_ROLE,
+                        "Access Denied: This account is registered as $regTitle. You cannot log in to the $targetTitle portal."
+                    )
+                }
+                if (assignedRole == null && profile == null) {
+                    signOut()
+                    return failure(
+                        AuthErrorCode.ROLE_NOT_ASSIGNED,
+                        AuthPipelineStep.VERIFYING_ROLE,
+                        "No profile assigned to this account. Contact the CPCB helpdesk to complete onboarding."
+                    )
+                }
+            }
+        } else {
+            // Unconfigured/demo mode: require account to match registered role
+            if (registeredRole != null && registeredRole != targetRole) {
+                return failure(
+                    AuthErrorCode.ROLE_MISMATCH,
+                    AuthPipelineStep.VERIFYING_ROLE,
+                    "Access Denied: This account is registered as ${roleTitle(registeredRole)}. You cannot log in to the ${roleTitle(targetRole)} portal."
+                )
+            }
         }
 
+        // Cache valid match
+        rememberLocalRegistration(trimmedEmail, targetRole)
+
         val effectiveUserId = userId ?: "usr-${trimmedEmail.hashCode()}"
-        Log.i(TAG, "Credentials accepted for $trimmedEmail — issuing OTP challenge")
-        return issuePendingOtp(effectiveUserId, trimmedEmail)
+        Log.i(TAG, "Credentials accepted for $trimmedEmail — issuing OTP challenge for ${targetRole.name}")
+        return issuePendingOtp(effectiveUserId, trimmedEmail, targetRole)
     }
 
     @Deprecated("Remove path to simulated login. Use loginWithGoogleAuthResult() instead.")
@@ -573,11 +773,8 @@ class SupabaseAuthService private constructor(private val context: Context) {
         // Step 3: Verify statutory role versus requested portal
         _currentPipelineStep.value = AuthPipelineStep.VERIFYING_ROLE
         if (assignedRole != targetRole) {
-            val message = when (assignedRole) {
-                RoleType.INFORMAL_COLLECTOR -> "This account is registered as an Informal Collector. Continue to the Collector Dashboard?"
-                RoleType.FORMAL_RECYCLER -> "This account is registered as a Formal Recycler. Continue to the Recycler Dashboard?"
-                RoleType.GOVERNMENT_ADMIN -> "This account is registered as a Government Admin. Continue to the Admin Portal?"
-            }
+            val message = "Access Denied: This account is registered as ${roleTitle(assignedRole)}. You can only log in through the ${roleTitle(assignedRole)} portal."
+            signOut()
             return failure(AuthErrorCode.ROLE_MISMATCH, AuthPipelineStep.VERIFYING_ROLE, message)
         }
 
@@ -645,7 +842,7 @@ class SupabaseAuthService private constructor(private val context: Context) {
      * session stays alive while [pendingOtpSession] is set; the dashboard opens
      * only after [verifyLoginOtp] confirms the code and the role check passes.
      */
-    private fun issuePendingOtp(authUserId: String, email: String): AuthResult {
+    private fun issuePendingOtp(authUserId: String, email: String, targetRole: RoleType): AuthResult {
         val now = System.currentTimeMillis()
         val code = String.format("%06d", Random.nextInt(100000, 999999))
         pendingOtpSession = OtpSession(
@@ -653,6 +850,7 @@ class SupabaseAuthService private constructor(private val context: Context) {
             email = email,
             authUserId = authUserId,
             otpCode = code,
+            targetRole = targetRole,
             createdAt = now,
             expiryTimestamp = now + OTP_VALIDITY_MS,
             attemptsRemaining = MAX_OTP_ATTEMPTS,
@@ -730,6 +928,15 @@ class SupabaseAuthService private constructor(private val context: Context) {
         val session = pendingOtpSession
             ?: return failure(AuthErrorCode.OTP_NOT_REQUESTED, AuthPipelineStep.AUTHENTICATING_USER)
 
+        if (session.targetRole != null && session.targetRole != targetRole) {
+            cancelPendingLogin()
+            return failure(
+                AuthErrorCode.ROLE_MISMATCH,
+                AuthPipelineStep.VERIFYING_ROLE,
+                "Access Denied: Login session was initiated for ${roleTitle(session.targetRole)}. You cannot complete sign-in to the ${roleTitle(targetRole)} portal."
+            )
+        }
+
         if (session.isExpired) {
             return failure(
                 AuthErrorCode.INVALID_OTP,
@@ -797,7 +1004,21 @@ class SupabaseAuthService private constructor(private val context: Context) {
             // Role mismatch, missing profile, or gated account: final answer.
             // Never downgrade a live session to a local demo login.
             Log.w(TAG, "Dynamic login refused: ${remoteResult.errorMessage}")
+            signOut()
+            pendingOtpSession = null
+            _devDisplayOtp.value = null
             return remoteResult
+        }
+
+        // Demo or unconfigured mode: ensure account was not registered under a different role
+        val registeredRole = checkRegisteredRole(session.email ?: "")
+        if (registeredRole != null && registeredRole != targetRole) {
+            cancelPendingLogin()
+            return failure(
+                AuthErrorCode.ROLE_MISMATCH,
+                AuthPipelineStep.VERIFYING_ROLE,
+                "Access Denied: This account is registered as ${roleTitle(registeredRole)}. You cannot log in to the ${roleTitle(targetRole)} portal."
+            )
         }
 
         Log.i(TAG, "No live session — demo login for ${session.email} as ${targetRole.name}")
@@ -862,11 +1083,6 @@ class SupabaseAuthService private constructor(private val context: Context) {
 
     // -----------------------------------------------------------------------
 
-    private fun roleToSlug(role: RoleType): String = when (role) {
-        RoleType.INFORMAL_COLLECTOR -> "informal_collector"
-        RoleType.FORMAL_RECYCLER -> "formal_recycler"
-        RoleType.GOVERNMENT_ADMIN -> "government_admin"
-    }
 
     /** Reads the live `profiles` row for an auth user (null when not provisioned). */
     private suspend fun fetchProfile(authUserId: String): ProfileRow? {
