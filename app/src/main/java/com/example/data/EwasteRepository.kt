@@ -473,6 +473,10 @@ class EwasteRepository(
                 )
             )
         }
+
+        fun getDefaultAuthorizedRecyclers(): List<AuthorizedRecycler> {
+            return getDefaultRecyclers().map { it.toDomainModel() }
+        }
     }
 }
 
@@ -525,7 +529,7 @@ private fun PriceRecordEntity.toDomainModel(): PriceRecord {
     )
 }
 
-private fun RecyclerEntity.toDomainModel(): AuthorizedRecycler {
+internal fun RecyclerEntity.toDomainModel(): AuthorizedRecycler {
     val accepted = acceptedCategoriesJoined.split(",")
         .mapNotNull { catStr -> runCatching { MaterialCategory.valueOf(catStr.trim()) }.getOrNull() }
 

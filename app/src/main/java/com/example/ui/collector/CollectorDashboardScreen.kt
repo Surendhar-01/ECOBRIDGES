@@ -71,6 +71,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -502,6 +503,10 @@ fun CollectorDashboardScreen(
                         selectedRecyclerIdForMap = recyclerId
                         showMapView = true
                     },
+                    onCallRecycler = { phone ->
+                        val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))
+                        runCatching { context.startActivity(intent) }
+                    },
                     onStartAssistant = { viewModel.voiceEngine?.startListening(language) },
                     anomalousLotIds = anomalousLotIds,
                     hasActiveFilters = hasActiveFilters,
@@ -714,6 +719,7 @@ fun HomeTab(
     onOpenRecyclers: () -> Unit,
     onOpenMap: () -> Unit,
     onOpenMapForRecycler: ((String) -> Unit)? = null,
+    onCallRecycler: (String) -> Unit = {},
     onStartAssistant: () -> Unit,
     anomalousLotIds: Set<String>,
     hasActiveFilters: Boolean,
@@ -750,6 +756,14 @@ fun HomeTab(
         ).format(java.util.Date(lastSyncTimestamp))
     } else {
         "—"
+    }
+
+    val formalRecyclers = remember(recyclers) {
+        if (recyclers.size >= 4) {
+            recyclers
+        } else {
+            (recyclers + com.example.data.EwasteRepository.getDefaultAuthorizedRecyclers()).distinctBy { it.recyclerId }
+        }
     }
 
     LazyColumn(
@@ -820,124 +834,265 @@ fun HomeTab(
             }
         }
 
-        // ----- Nearby Recyclers (featured partner strip) -----
+        // ----- Authorized Formal Recyclers & Ratings Section -----
         item {
-            val featured = recyclers.minByOrNull { it.distanceKm }
-            if (featured != null) {
-                Card(
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = EcoGreenDeep),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpenRecyclers() }
-                        .testTag("featured_recycler_card")
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = when (language) {
-                                Language.ENGLISH -> "Nearby Recyclers"
-                                Language.HINDI -> "आसपास के रीसायकलर"
-                                Language.MARATHI -> "जवळील रीसायकलर"
+                                Language.ENGLISH -> "Authorized Formal Recyclers"
+                                Language.HINDI -> "अधिकृत औपचारिक रीसायकलर"
+                                Language.MARATHI -> "अधिकृत औपचारिक रीसायकलर"
                             },
-                            color = Color.White,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
+                            fontSize = 17.sp,
+                            color = EcoTextPrimary
                         )
                         Text(
                             text = when (language) {
-                                Language.ENGLISH -> "Authorized partners near you"
-                                Language.HINDI -> "आपके निकट अधिकृत पार्टनर"
-                                Language.MARATHI -> "तुमच्या जवळील अधिकृत भागीदार"
+                                Language.ENGLISH -> "CPCB certified partners with ratings & certified weighment"
+                                Language.HINDI -> "CPCB सत्यापित पार्टनर - रेटिंग एवं प्रमाणित वजन"
+                                Language.MARATHI -> "CPCB प्रमाणित भागीदार - रेटिंग आणि खात्रीशीर वजन"
                             },
-                            color = Color.White.copy(alpha = 0.75f),
-                            fontSize = 11.sp
+                            fontSize = 11.sp,
+                            color = EcoTextSecondary
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color.White.copy(alpha = 0.16f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(text = "🏭", fontSize = 22.sp)
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = featured.name,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "${featured.city}, ${featured.facilityLocation} • ₹${featured.buyingRates.values.maxOrNull()?.toInt() ?: 0}/kg",
-                                    color = Color.White.copy(alpha = 0.8f),
-                                    fontSize = 11.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = Color.White.copy(alpha = 0.18f)
-                            ) {
-                                Text(
-                                    text = "${featured.distanceKm} km",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                )
-                            }
-                        }
+                    }
+                    TextButton(onClick = { onOpenRecyclers() }) {
+                        Text(
+                            text = "View All (${formalRecyclers.size})",
+                            color = ForestGreenPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    formalRecyclers.forEach { rec ->
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onOpenMapForRecycler?.invoke(rec.recyclerId) ?: onOpenRecyclers() }
+                                .testTag("formal_recycler_${rec.recyclerId.lowercase()}")
                         ) {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color.White.copy(alpha = 0.22f),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable {
-                                        onOpenMapForRecycler?.invoke(featured.recyclerId) ?: onOpenMap()
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                // Header: Name + Star Rating Badge
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(38.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(MintLight),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(text = "🏭", fontSize = 18.sp)
+                                        }
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = rec.name,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp,
+                                                color = TextPrimaryDark,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "${rec.city} • ${rec.cpcbRegNo}",
+                                                fontSize = 11.sp,
+                                                color = SuccessGreen,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(vertical = 7.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.LocationOn, contentDescription = null, tint = EmeraldAccent, modifier = Modifier.size(14.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("View on Map", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
 
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color.White.copy(alpha = 0.22f),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable { onOpenRecyclers() }
-                            ) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    // Prominent Star Rating Badge
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = Color(0xFFFFF8E1),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD54F))
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Star,
+                                                contentDescription = "Rating",
+                                                tint = WarningAmber,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text(
+                                                text = "${rec.rating} ★",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                color = Color(0xFF795548)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // Location & Distance
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.LocationOn,
+                                        contentDescription = null,
+                                        tint = TextSecondaryMuted,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "${rec.facilityLocation} • ${rec.distanceKm} km away",
+                                        fontSize = 11.sp,
+                                        color = TextSecondaryMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // Best Rate & Service
                                 Row(
-                                    modifier = Modifier.padding(vertical = 7.dp),
-                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("View All Hubs", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    val topRate = rec.buyingRates.values.maxOrNull()?.toInt() ?: 0
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = EcoGreenDeep.copy(alpha = 0.08f)
+                                    ) {
+                                        Text(
+                                            text = "Top Rate: ₹$topRate/kg",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = EcoGreenDeep,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                        )
+                                    }
+
+                                    if (rec.doorstepPickup) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = SuccessGreen.copy(alpha = 0.1f)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.LocalShipping,
+                                                    contentDescription = null,
+                                                    tint = SuccessGreen,
+                                                    modifier = Modifier.size(11.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(3.dp))
+                                                Text(
+                                                    text = "Doorstep Pickup",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = SuccessGreen
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Action Buttons (Call & Map)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MintLight,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable {
+                                                onOpenMapForRecycler?.invoke(rec.recyclerId) ?: onOpenMap()
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(vertical = 7.dp),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.LocationOn,
+                                                contentDescription = null,
+                                                tint = ForestGreenPrimary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "View Map",
+                                                color = ForestGreenPrimary,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = EcoGreenDeep,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable { onCallRecycler(rec.phone) }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(vertical = 7.dp),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Call,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "Call Recycler",
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2702,11 +2857,18 @@ fun RecyclersTab(
     var materialFilter by remember { mutableStateOf<MaterialCategory?>(null) }
     var pickupOnly by remember { mutableStateOf(false) }
     var sortByTopRate by remember { mutableStateOf(false) }
-    val availableMaterials = remember(recyclers) {
-        recyclers.flatMap { it.acceptedCategories }.distinct()
+    val allRecyclers = remember(recyclers) {
+        if (recyclers.size >= 4) {
+            recyclers
+        } else {
+            (recyclers + com.example.data.EwasteRepository.getDefaultAuthorizedRecyclers()).distinctBy { it.recyclerId }
+        }
     }
-    val visibleRecyclers = remember(recyclers, materialFilter, pickupOnly, sortByTopRate) {
-        recyclers
+    val availableMaterials = remember(allRecyclers) {
+        allRecyclers.flatMap { it.acceptedCategories }.distinct()
+    }
+    val visibleRecyclers = remember(allRecyclers, materialFilter, pickupOnly, sortByTopRate) {
+        allRecyclers
             .filter { rec ->
                 (materialFilter == null || rec.acceptedCategories.contains(materialFilter)) &&
                     (!pickupOnly || rec.doorstepPickup)
@@ -2877,12 +3039,33 @@ fun RecyclersTab(
                             text = rec.name,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
-                            color = TextPrimaryDark
+                            color = TextPrimaryDark,
+                            modifier = Modifier.weight(1f)
                         )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(imageVector = Icons.Default.Star, contentDescription = null, tint = WarningAmber, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(2.dp))
-                            Text(text = "${rec.rating}", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFFFFF8E1),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD54F))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = "Rating",
+                                    tint = WarningAmber,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "${rec.rating} ★",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF795548)
+                                )
+                            }
                         }
                     }
 
