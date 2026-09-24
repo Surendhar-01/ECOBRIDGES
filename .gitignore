@@ -22,7 +22,10 @@ node_modules/
 dist/
 __pycache__/
 *.pyc
-# .env
+# Secrets: every real .env in any folder stays local. Only .env.example ships.
+.env
+**/.env
 !.env.example
+!**/.env.example
 
 

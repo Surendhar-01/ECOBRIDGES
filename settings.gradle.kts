@@ -24,4 +24,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "ECOBRIDGES"
 
-include(":app")
+// Website-first: the Android client lives archived under archive/android-app
+// and is NOT part of the build. The product client is frontend/ (React).
+// include(":app")

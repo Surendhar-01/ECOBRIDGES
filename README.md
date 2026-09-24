@@ -224,15 +224,18 @@ completion instead of only reporting that testing occurred.
 -   Expanded AI training
 -   Large-scale deployment
 
-## 📁 Repository Structure
+## 📁 Repository Structure (website-first)
 
 ``` text
 ECOBRIDGES/
-├── frontend/
+├── frontend/            # Product client: React + TypeScript + Vite (responsive, mobile-friendly)
 ├── backend/
-├── ai-service/
-├── supabase/
-├── docs/
+│   ├── nestjs/          # Enterprise API: auth, role validation, voice intent routing
+│   └── fastapi/         # Voice & intent AI service (Whisper + NLP)
+├── supabase/            # schema.sql + migrations (single source of truth)
+├── exports/             # Sample CSV datasets
+├── archive/
+│   └── android-app/     # Retired Android client (not built, kept for reference)
 └── README.md
 ```
 
